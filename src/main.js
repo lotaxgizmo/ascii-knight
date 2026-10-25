@@ -376,7 +376,7 @@ function drawWaystone(bx, by) { // dark obelisk with a glowing rune channel, on 
     setC(bx + xx, y, 52 * k, 54 * k, 70 * k, 2);
   }
   block(bx - 1, by - 1); block(bx, by - 1); block(bx + 1, by - 1);
-  staticLights.push({x: bx + .5, y: by, r: 14, i: .8, c: [.6, .45, 1], ph: rnd() * 6, kind: "rune"});
+  staticLights.push({x: bx + .5, y: by, r: 26, i: 1.5, c: [.62, .45, 1], ph: rnd() * 6, kind: "rune"});
   occluders.push({x0: bx - 1.5, x1: bx + 1.5, yTop: by - h, yBase: by});
 }
 
@@ -2016,8 +2016,8 @@ function render() {
     glow(f.x, f.y - f.z, [190, 255, 120], 3.5, .35 * a); glyph("·", f.x, f.y - f.z, 220, 255, 150, a);
   }
   for (const w of wisps) { glow(w.x, w.y - w.z, [140, 255, 190], 9, .5); glyph("o", w.x, w.y - w.z, 210, 255, 225, .95); }
+  drawWaystones();
   octx.globalCompositeOperation = "source-over";
-  // dummies and the knight, back to front
   // dummies and knights, back to front
   const ents = dummies.map(d => ({y: d.y, f: () => drawDummy(d)}));
   for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { drawKnightAt(p.x, p.y, p.p, colorOf(p.id), p.name, teamOf(p.id), p.face, p.dead ? .5 : 1, p.prot); drawRemoteExtras(p); }});
@@ -2081,24 +2081,91 @@ function updateTravel(dt) {
     banner(w.name, "waystone");
   }
 }
+// Waystones drawn live on top of the world so they read from far away: a pillar of light, a floating
+// crystal, a slowly turning ring of runes on the ground and the destination's name.
+const RUNES = "ᚠᚢᚦᚨᚱᚲᚷᚹ";
+function drawWaystones() {
+  const L = 4.6 * CH;
+  for (const w of WAYSTONES) {
+    const X = sx(w.x), Y = sy(w.y);
+    if (X < -200 * dpr || X > Wpx + 200 * dpr || Y < -100 * dpr || Y > Hpx + 300 * dpr) continue;
+    const near = w === nearWay, pulse = .75 + .25 * Math.sin(time * 2.2 + w.x);
+    // pillar of light rising from the stone
+    const bw = Math.max((near ? 3 : 2.2) * CW, (near ? 16 : 12) * dpr), top = Y - Math.max(46 * CH, 260 * dpr); // stays bold when zoomed out
+    const g = octx.createLinearGradient(0, Y, 0, top);
+    g.addColorStop(0, `rgba(210,175,255,${.7 * pulse})`); g.addColorStop(.3, `rgba(150,105,255,${.32 * pulse})`); g.addColorStop(1, "rgba(120,80,255,0)");
+    octx.globalAlpha = 1; octx.fillStyle = g; octx.fillRect(X - bw / 2, top, bw, Y - top);
+    glow(w.x, w.y, [170, 120, 255], near ? 22 : 16, .55 * pulse);
+    // ring of runes turning on the ground, with a glowing circle under them
+    octx.strokeStyle = `rgba(180,140,255,${.55 * pulse})`; octx.lineWidth = 2 * dpr;
+    octx.beginPath(); octx.ellipse(X, sy(w.y + 1), Math.max(6 * CW, 30 * dpr), Math.max(2.6 * CH, 11 * dpr), 0, 0, 6.283); octx.stroke();
+    for (let k = 0; k < RUNES.length; k++) {
+      const a = k / RUNES.length * 6.283 + time * .6;
+      glyph(RUNES[k], w.x + Math.cos(a) * 6, w.y + 1 + Math.sin(a) * 2.6, 200, 170, 255, .6 + .4 * Math.sin(time * 3 + k));
+    }
+    // floating crystal above the obelisk
+    const cw = Math.max(1.4 * CW, 8 * dpr), ch = Math.max(L * .5, 20 * dpr), cy = Y - Math.max(12 * CH, 64 * dpr) + Math.sin(time * 1.8 + w.y) * .6 * CH;
+    glow(w.x, (cy + TLy) / CH, [200, 160, 255], near ? 12 : 9, .9);
+    octx.save(); octx.translate(X, cy); octx.scale(Math.cos(time * 1.4 + w.x) * .35 + .75, 1);
+    const cg = octx.createLinearGradient(-cw, 0, cw, 0);
+    cg.addColorStop(0, "#f6efff"); cg.addColorStop(.5, "#b490ff"); cg.addColorStop(1, "#6a3fd8");
+    octx.globalAlpha = .95; octx.fillStyle = cg;
+    octx.beginPath(); octx.moveTo(0, -ch); octx.lineTo(cw, 0); octx.lineTo(0, ch * .6); octx.lineTo(-cw, 0); octx.closePath(); octx.fill();
+    octx.restore();
+    // name, always readable
+    octx.globalCompositeOperation = "source-over";
+    octx.font = `700 ${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`; octx.lineJoin = "round";
+    const label = `◆ ${w.name}`, ly = cy - ch - 6 * dpr;
+    octx.globalAlpha = .9; octx.lineWidth = 3 * dpr; octx.strokeStyle = "rgba(10,5,25,.9)"; octx.strokeText(label, X, ly);
+    octx.fillStyle = near ? "#ffffff" : "#d9c6ff"; octx.fillText(label, X, ly);
+    if (near) { octx.font = `600 ${Math.round(9 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`; octx.fillStyle = "#e4d6ff"; const hint = isTouch ? "waystone · tap Travel" : "waystone · E to travel"; octx.strokeText(hint, X, ly - 12 * dpr); octx.fillText(hint, X, ly - 12 * dpr); }
+    octx.font = FONT; octx.globalCompositeOperation = "lighter";
+  }
+  octx.globalAlpha = 1;
+}
 function tpBurst(x, y) {
   rings.push({x, y, r: 1, r1: 10, t: 0, life: .4, c: [180, 140, 255]});
   tempLights.push({x, y, r: 26, i: 2.2, c: [.7, .5, 1], life: .45, max: .45});
   for (let k = 0; k < 30; k++) { const a = rnd() * 6.283, s = 4 + rnd() * 12; particles.push({x, y, z: rnd() * 8, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 8, g: 0, life: .5 + rnd() * .4, max: .9, ch: ["*", "+", "'", "."][k % 4], c0: [235, 220, 255], c1: [100, 60, 220]}); }
 }
+// The travel screen is the whole world map: every waystone is a pin you can pick, you see where you are,
+// and other knights show as dots (enemies red-ringed), so you can choose where to go by eye.
 function openTravel() {
   if (!nearWay || player.dead) return;
-  const list = $("travelList"); list.textContent = "";
+  const cv = $("travelCanvas"), pins = $("travelPins");
+  const aspect = H * VS / W; // map rows are squashed in the world view; stretch them back for the map
+  const cw = Math.round(Math.min(innerWidth * .92, innerHeight * .74 / aspect, 720)), ch = Math.round(cw * aspect);
+  cv.style.width = cw + "px"; cv.style.height = ch + "px"; cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+  const x = cv.getContext("2d");
+  x.imageSmoothingEnabled = true; x.drawImage(miniSrc, 0, 0, cv.width, cv.height);
+  x.fillStyle = "rgba(6,4,16,.28)"; x.fillRect(0, 0, cv.width, cv.height);
+  // paths between waystones read as faint lines from here
+  x.strokeStyle = "rgba(190,160,255,.25)"; x.lineWidth = dpr; x.setLineDash([3 * dpr, 4 * dpr]);
+  for (const w of WAYSTONES) { if (w === nearWay) continue; x.beginPath(); x.moveTo(nearWay.x / W * cv.width, nearWay.y / H * cv.height); x.lineTo(w.x / W * cv.width, w.y / H * cv.height); x.stroke(); }
+  x.setLineDash([]);
+  for (const p of livePeers()) {
+    if (p.dead) continue;
+    const px = p.x / W * cv.width, py = p.y / H * cv.height;
+    x.fillStyle = `rgb(${PALETTE[colorOf(p.id)].map(v => Math.min(255, v + 60)).join(",")})`; x.beginPath(); x.arc(px, py, 3 * dpr, 0, 6.283); x.fill();
+    if (isEnemy(p.id)) { x.strokeStyle = "#ff4b3e"; x.lineWidth = 1.5 * dpr; x.beginPath(); x.arc(px, py, 5 * dpr, 0, 6.283); x.stroke(); }
+  }
+  pins.textContent = "";
+  const pin = (w, cls, label, onPick) => {
+    const b = document.createElement("button"); b.className = "pin " + cls;
+    b.style.left = (w.x / W * 100) + "%"; b.style.top = (w.y / H * 100) + "%";
+    const t = document.createElement("span"); t.textContent = label; b.appendChild(t);
+    if (onPick) b.addEventListener("click", e => { e.stopPropagation(); onPick(); }); else b.disabled = true;
+    pins.appendChild(b);
+  };
   for (const w of WAYSTONES) {
-    if (w === nearWay) continue;
-    const b = document.createElement("button");
-    b.innerHTML = `<b></b><small>${Math.round(gdist(w.x, w.y, player.x, player.y))}m</small>`; b.firstChild.textContent = w.name;
-    b.addEventListener("click", e => { e.stopPropagation(); $("travel").hidden = true; player.tp = {t: 0, dest: w}; charge.on = false; });
-    list.appendChild(b);
+    if (w === nearWay) { pin(w, "here", `${w.name} · you are here`); continue; }
+    pin(w, "dest", `${w.name} · ${Math.round(gdist(w.x, w.y, player.x, player.y))}m`, () => { $("travel").hidden = true; player.tp = {t: 0, dest: w}; charge.on = false; });
   }
   $("travel").hidden = false;
 }
 $("travelBtn").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); $("travel").hidden ? openTravel() : ($("travel").hidden = true); });
+$("travelClose").addEventListener("click", e => { e.stopPropagation(); $("travel").hidden = true; });
+$("travel").addEventListener("click", e => { if (e.target.id === "travel") $("travel").hidden = true; }); // click outside the map
 
 /* ============================== multiplayer ============================== */
 /* No server, no sign-in. Everyone in a mode's room connects directly (src/net.js). Each peer draws a random
@@ -2472,3 +2539,4 @@ function showLobby() {
 $("modeSel").addEventListener("click", e => { e.stopPropagation(); const m = e.target.closest("button"); if (m) setRealmMode(m.dataset.m); });
 $("score").addEventListener("click", e => { if (e.target.id === "leaveBtn") { location.reload(); return; } const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 start();
+if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net}; // dev-server-only handle for testing

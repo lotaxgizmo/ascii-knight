@@ -149,14 +149,24 @@ button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}
 #travelBtn{position:fixed;z-index:6;left:50%;transform:translateX(-50%);bottom:calc(118px + env(safe-area-inset-bottom,0px));padding:7px 14px;border:1px solid rgba(181,140,255,.6);background:rgba(20,10,40,.7);color:#e4d6ff;font:600 12px var(--mono);text-shadow:0 0 10px rgba(160,110,255,.9);cursor:pointer}
 #travelBtn[hidden],#travel[hidden]{display:none}
 #travelBtn kbd{font:10px var(--mono);padding:0 4px;border:1px solid rgba(228,214,255,.4);margin-left:4px}
-#travel{left:50%;transform:translateX(-50%);bottom:calc(158px + env(safe-area-inset-bottom,0px));padding:6px;display:grid;gap:4px;min-width:220px;max-height:50vh;overflow:auto;pointer-events:auto;z-index:7}
-#travel .tt{color:var(--dim);font-size:10px;letter-spacing:.2em;text-transform:uppercase;padding:2px 4px}
-#travelList{display:grid;gap:3px}
-#travelList button{all:unset;cursor:pointer;display:flex;justify-content:space-between;gap:12px;padding:6px 8px;border:1px solid var(--line);background:rgba(255,255,255,.03)}
-#travelList button:hover,#travelList button:focus-visible{border-color:#b58cff;background:rgba(181,140,255,.1)}
-#travelList b{font-weight:600;color:#e4d6ff}
-#travelList small{color:var(--dim);font-variant-numeric:tabular-nums}
-@media (max-height:500px){#travelBtn{bottom:calc(52px + env(safe-area-inset-bottom,0px))}#travel{bottom:calc(88px + env(safe-area-inset-bottom,0px));max-height:60vh}}
+#travel{position:fixed;inset:0;z-index:8;display:grid;place-items:center;background:rgba(2,2,8,.55);padding:12px}
+.tr-card{position:relative;display:grid;gap:6px;padding:8px;pointer-events:auto}
+.tr-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.tr-head .tt{color:#d9c6ff;font-size:10.5px;letter-spacing:.18em;text-transform:uppercase}
+#travelClose{all:unset;cursor:pointer;padding:3px 9px;border:1px solid var(--line);font:10px var(--mono);color:var(--fg)}
+#travelMap{position:relative;line-height:0;border:1px solid rgba(181,140,255,.35)}
+#travelPins{position:absolute;inset:0}
+.pin{all:unset;position:absolute;transform:translate(-50%,-50%);width:14px;height:14px;cursor:pointer}
+.pin::before{content:"";position:absolute;inset:2px;transform:rotate(45deg);background:#b58cff;box-shadow:0 0 10px 2px rgba(181,140,255,.85);border:1px solid #f1e8ff}
+.pin span{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);white-space:nowrap;font:600 10px/1.3 var(--mono);color:#efe6ff;background:rgba(10,6,24,.82);padding:1px 5px;border:1px solid rgba(181,140,255,.45);pointer-events:none}
+.pin.dest:hover::before,.pin.dest:focus-visible::before{background:#fff;box-shadow:0 0 16px 5px rgba(200,160,255,1)}
+.pin.dest:hover span,.pin.dest:focus-visible span{color:#fff;border-color:#fff}
+.pin.here{cursor:default}
+.pin.here::before{background:#ff4b3e;border-color:#fff;box-shadow:0 0 12px 3px rgba(255,75,62,.9);animation:herePulse 1.2s ease-in-out infinite}
+.pin.here span{color:#ffd1cc;border-color:rgba(255,120,110,.6)}
+@keyframes herePulse{50%{transform:rotate(45deg) scale(1.35)}}
+@media (prefers-reduced-motion:reduce){.pin.here::before{animation:none}}
+@media (max-height:500px){#travelBtn{bottom:calc(52px + env(safe-area-inset-bottom,0px))}.pin span{font-size:9px;bottom:13px}}
 #modeSel{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;align-items:center;margin-top:4px;font-size:10px;color:var(--dim)}
 #modeSel[hidden]{display:none}
 #modeSel button{all:unset;cursor:pointer;padding:2px 7px;border:1px solid var(--line);font:10px var(--mono);color:var(--fg)}
