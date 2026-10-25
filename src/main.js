@@ -2261,10 +2261,10 @@ async function joinRealm(want) {
     kill(k, id) { onKill(k.by, id); },
     snap(s, id) { applySnap(s, id); },
     joinError() { // usually a network (mobile data, strict wifi) that blocks direct peer connections
-      if (time - (net.lastJoinErr || -99) > 20) { net.lastJoinErr = time; addLog("A knight tried to join but your networks couldn't connect directly. Wi-Fi usually works better than mobile data.", "System", "warn"); }
+      if (time - (net.lastJoinErr || -99) > 20) { net.lastJoinErr = time; addLog("A direct link to a knight failed; linking through the relays instead (a little laggier).", "System", "sys"); }
     },
   }, turn.iceServers);
-  addLog(`Entering the arena. ${net.turnOk ? "Relay ready: players on any network can connect." : "No relay configured: players on strict networks (often mobile data) may not connect."}`, "System", net.turnOk ? "sys" : "warn");
+  addLog("Entering the arena. Players who can't connect directly are linked through public relays (a little laggier).", "System", "sys");
 }
 function setRealmMode(m) { // host only: everyone follows into the new mode with fresh scores
   if (!net.host || !MODES[m]) return;
@@ -2409,10 +2409,11 @@ function updateNet(dt) {
     net.api.send("st", [r2(player.x), r2(player.y), p.fr, p.flip ? 1 : 0, r2(p.lift), r2(p.tilt), r2(p.sX), r2(p.sY), p.ss === null ? null : r2(p.ss), p.side ? 1 : 0,
       Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["fire", "bolt", "blades", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), time < player.prot ? 1 : 0, r2(player.shieldUp)]);
   }
-  // other knights are drawn ~110 ms in the past, blended between the two updates around that moment
-  const rt = performance.now() - 110;
+  // other knights are drawn a moment in the past, blended between the two updates around that moment:
+  // ~110 ms for direct links, ~400 ms for players reached through the relays (fewer, later updates)
   for (const p of net.peers.values()) {
     const b = p.buf; if (!b.length) continue;
+    const rt = performance.now() - (net.api.viaRelay(p.id) ? 400 : 110);
     let a = b[0], c = b[b.length - 1];
     for (let i = 0; i < b.length - 1; i++) if (b[i].t <= rt && b[i + 1].t >= rt) { a = b[i]; c = b[i + 1]; break; }
     const k = c.t > a.t ? clamp((rt - a.t) / (c.t - a.t), 0, 1) : 1;
@@ -2476,7 +2477,8 @@ function updateScore(dt) {
     let lead = null, lk = -1; for (const [id, s] of Object.entries(hs.score)) if (s[0] > lk) { lk = s[0]; lead = id; }
     line = `You <b>${mine}</b> · Leader <b>${lead ? nameOf(lead) : "—"} ${Math.max(0, lk)}</b>`;
   }
-  const role = net.host ? " · you are host" : net.backup ? " · standby host" : "";
+  const viaRelay = net.api ? net.api.relayCount() : 0;
+  const role = (net.host ? " · you are host" : net.backup ? " · standby host" : "") + (viaRelay ? ` · ${viaRelay} via relay` : "");
   $("modeSel").hidden = true; // mode switching is off while the game is Free for All only
   $("modeSel").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === net.mode));
   $("scoreLine").innerHTML = `${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
