@@ -4,7 +4,10 @@
 import {joinRoom, selfId, getRelaySockets, createEvent, subscribe} from "trystero";
 
 export {selfId};
-const APP_ID = "gizmo-knight-v1";
+// bump PROTOCOL whenever messages change: older cached copies of the game then land in a different room and
+// can never mix their match state into this one (that caused players to be thrown around the arena)
+export const PROTOCOL = 2;
+const APP_ID = `gizmo-knight-p${PROTOCOL}`;
 // Relays checked to answer quickly and accept the ephemeral events Trystero uses for matchmaking.
 // Every peer connects to all of them, so any two players always share several working relays.
 // (Trystero's own default picks 5 from a long list, and several of those were refusing connections.)
@@ -42,8 +45,17 @@ const FORCE_RELAY = typeof location !== "undefined" && new URLSearchParams(locat
 const FB_TOPIC = `${APP_ID}-fallback`, FB_SUB = "gk-fb", FB_PUBLISH_TO = 3, FB_ST_INTERVAL = 250, FB_PEER_TIMEOUT = 10000;
 
 export function connect(hello, on, turn = []) {
-  const room = joinRoom({appId: APP_ID, relayConfig: {urls: RELAYS, warnOnRelayFailure: false}, rtcConfig: {iceServers: [...ICE, ...turn]}}, "realm", {
+  const room = joinRoom({appId: APP_ID, relayConfig: {urls: RELAYS, warnOnRelayFailure: false}, rtcConfig: {iceServers: [...ICE, ...turn]}}, "arena", {
     onJoinError: d => on.joinError && on.joinError(d),
+    // Every direct link starts with a tiny check from both sides: same game version, and neither is in
+    // relay-only test mode. Either side refusing drops the link on both ends (like a blocked network), and
+    // those players carry on through the relay fallback instead.
+    onPeerHandshake: async (id, send, receive) => {
+      await send({v: PROTOCOL, ro: FORCE_RELAY});
+      const {data} = await receive();
+      if (FORCE_RELAY || !data || data.ro || data.v !== PROTOCOL) throw new Error("no direct link");
+    },
+    handshakeTimeoutMs: 6000,
   });
   const deliver = (name, data, id) => { try { on[name] && on[name](data, id); } catch (e) { console.warn("[net]", name, e); } };
   const direct = new Set(), relayPeers = new Map(); // relayPeers: id -> last time heard via relay (not directly connected)
@@ -99,7 +111,9 @@ export function connect(hello, on, turn = []) {
 
   return {
     send(name, data, target) {
-      acts[name].send(data, target ? {target} : undefined).catch(() => {});
+      // direct link only where one exists (targeting a relay-only player made Trystero log a warning per message)
+      if (!target) { if (direct.size) acts[name].send(data).catch(() => {}); }
+      else if (direct.has(target)) acts[name].send(data, {target}).catch(() => {});
       // also through the relay, but only for players we can't reach directly
       if (!relayPeers.size || (target && !relayPeers.has(target))) return;
       if (name === "st") { const now = Date.now(); if (now - lastSt < FB_ST_INTERVAL) return; lastSt = now; }

@@ -687,7 +687,7 @@ function resize() {
 }
 
 /* ============================== game state ============================== */
-const player = {tp: null, dead: 0, hurt: 0, prot: 0, lastHurt: -9, slam: null, shield: false, shieldUp: 0, roll: null, rollCd: 0, running: false, atk: 0, atkCd: 0, recoil: 0, combo: 0, lastAtk: -9, ghostT: 0, lastFr: 0, x: S.x, y: S.y + 16, face: 1, dx: 0, dy: -1, anim: 0, moving: false, hp: 120, mhp: 120, mp: 60, mmp: 60, lv: 1, xp: 0, gold: 0};
+const player = {kb: {kills: 0, dmg: 0, hp: 0, mp: 0}, tp: null, dead: 0, hurt: 0, prot: 0, lastHurt: -9, slam: null, shield: false, shieldUp: 0, roll: null, rollCd: 0, running: false, atk: 0, atkCd: 0, recoil: 0, combo: 0, lastAtk: -9, ghostT: 0, lastFr: 0, x: S.x, y: S.y + 16, face: 1, dx: 0, dy: -1, anim: 0, moving: false, hp: 120, mhp: 120, mp: 60, mmp: 60, lv: 1, xp: 0, gold: 0};
 const cam = {x: player.x, y: player.y - 3};
 const keys = {};
 const stick = {id: null, x: 0, y: 0, ox: 0, oy: 0, t0: 0};
@@ -833,12 +833,12 @@ function banner(title, sub) {
 }
 let hudCache = "";
 function updateHUD() {
-  const key = `${Math.ceil(player.hp)}|${player.mp | 0}|${player.lv}|${player.xp}|${player.gold}`;
+  const key = `${Math.ceil(player.hp)}|${player.mp | 0}|${player.lv}|${player.xp}|${player.gold}|${player.kb.kills}|${player.mhp}`;
   if (key !== hudCache) {
     hudCache = key;
     $("hpf").style.width = (player.hp / player.mhp * 100) + "%"; $("hpt").textContent = `${Math.ceil(player.hp)}/${player.mhp}`;
     $("mpf").style.width = (player.mp / player.mmp * 100) + "%"; $("mpt").textContent = `${player.mp | 0}/${player.mmp}`;
-    $("lv").textContent = `LV ${player.lv} · ${player.gold}g`;
+    $("lv").textContent = player.kb.kills ? `LV ${player.lv} · ⚔ ${player.kb.kills} · +${Math.round(player.kb.dmg * 100)}% dmg` : `LV ${player.lv} · ${player.gold}g`;
     $("xpf").style.width = (player.xp / xpNeed() * 100) + "%";
   }
   slot1cd.style.height = (cd > 0 ? cd / .35 * 100 : 0) + "%";
@@ -1040,7 +1040,7 @@ function slashDir(dx, dy) {
       hit = Math.hypot(px - ax - t * (bx - ax), py - ay - t * (by - ay)) < mv.width;
     } else hit = dist < mv.reach && (mv.arc >= Math.PI || Math.acos(clamp((vx * dx + vy * dy) / (dist || 1), -1, 1)) < mv.arc);
     if (!hit) continue;
-    landed = true; damage(d, mv.dmg, "phys"); d.jit = .3;
+    landed = true; damage(d, mv.dmg, "phys"); d.jit = .3; meleeMana(d);
     const away = Math.atan2(vy, vx);
     for (let k = 0; k < 14; k++) { const a = away + (rnd() - .5) * 1.6, s = 14 + rnd() * 20; particles.push({x: d.x, y: d.y, z: 3 + rnd() * 3, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: (rnd() - .5) * 8, g: -10, life: .3 + rnd() * .3, max: .6, ch: ["/", "\\", "-", "*"][k % 4], c0: [255, 255, 240], c1: [140, 190, 255]}); }
   }
@@ -1053,6 +1053,9 @@ function slashDir(dx, dy) {
   shake = Math.max(shake, .12);
 }
 // one swoosh of trail glyphs along an arc around the knight
+// Mana sources: base regen, moving (see update), melee hits (here), kills (killBonus) and waystone light.
+const MELEE_MP_KNIGHT = 8, MELEE_MP_DUMMY = 3, WAYSTONE_MP = 10;
+function meleeMana(target) { player.mp = Math.min(player.mmp, player.mp + (target.buf ? MELEE_MP_KNIGHT : MELEE_MP_DUMMY)); }
 function swoosh(base, from, span, r, z, delay, o = player) {
   for (let k = 0; k < 22; k++) {
     const u = k / 21, a = base + from + u * span, rr = r + Math.sin(u * Math.PI) * 1.8;
@@ -1067,21 +1070,21 @@ function swoosh(base, from, span, r, z, delay, o = player) {
    Sweep: wide horizontal arc. Cleave: overhead chop, narrow but long, cracks the ground ahead.
    Lunge: dashes forward through a lane, hitting everything in it. Whirlwind: full spin, hits all around. */
 const MELEE = [
-  {name: "Sweep", dmg: 36, reach: 7.5, arc: 1.35, step: 2.4, cd: .32, stop: .07, shake: .24, ring: 6,
+  {name: "Sweep", dmg: 55, reach: 7.5, arc: 1.35, step: 2.4, cd: .32, stop: .07, shake: .24, ring: 6,
     fx: (base, s) => swoosh(base, -1.25 * s, 2.5 * s, 6, 3.6, .09)},
-  {name: "Cleave", dmg: 52, reach: 10, arc: .55, step: 1.8, cd: .38, stop: .09, shake: .32, ring: 6,
+  {name: "Cleave", dmg: 78, reach: 10, arc: .55, step: 1.8, cd: .38, stop: .09, shake: .32, ring: 6,
     fx: (base, s, x0, y0, dx, dy) => {
       for (let k = 0; k < 16; k++) { const u = k / 15, r = 2 + u * 8; // a vertical blade line slamming down ahead
         particles.push({x: player.x + dx * r, y: player.y + dy * r / VS, z: 7 - u * 6.5, vx: 0, vy: 0, vz: -30, g: 0, delay: u * .05, life: .18, max: .18, ch: "|", c0: [255, 255, 255], c1: [110, 170, 255]}); }
       for (let k = 0; k < 12; k++) { const r = 4 + k * .6; particles.push({x: player.x + dx * r + (rnd() - .5), y: player.y + dy * r / VS, z: .2, vx: (rnd() - .5) * 6, vy: 0, vz: 3 + rnd() * 5, g: -20, delay: .05, life: .5, max: .5, ch: [".", ",", "'"][k % 3], c0: [190, 170, 130], c1: [60, 50, 40]}); }
     }},
-  {name: "Lunge", dmg: 58, reach: 3, lane: true, width: 3.2, step: 8, cd: .42, stop: .09, shake: .3, ring: 7,
+  {name: "Lunge", dmg: 88, reach: 3, lane: true, width: 3.2, step: 8, cd: .42, stop: .09, shake: .3, ring: 7,
     fx: (base, s, x0, y0, dx, dy) => { // a streak along the dash
       const L = Math.hypot(player.x - x0, (player.y - y0) * VS) + 3;
       for (let k = 0; k < 24; k++) { const r = k / 23 * L; particles.push({x: x0 + dx * r, y: y0 + dy * r / VS, z: 3.4 + (rnd() - .5), vx: dx * 20, vy: dy * 20 / VS, vz: 0, g: 0, delay: k / 23 * .06, life: .22, max: .22, ch: Math.abs(dx) > Math.abs(dy) ? "=" : "‖", c0: [255, 255, 255], c1: [110, 170, 255]}); }
       ghosts.push({x: x0, y: y0, ...knightPose(), life: .22});
     }},
-  {name: "Whirlwind", dmg: 74, reach: 8.5, arc: Math.PI, step: 0, cd: .55, stop: .12, shake: .42, ring: 10,
+  {name: "Whirlwind", dmg: 110, reach: 8.5, arc: Math.PI, step: 0, cd: .55, stop: .12, shake: .42, ring: 10,
     fx: base => { swoosh(base, 0, 6.283, 6.5, 3.4, .14); swoosh(base, Math.PI, 6.283, 5, 2.2, .14); }},
 ];
 /* Charging (shared by every power): tap = the basic cast. Hold past CHARGE_MIN and the power keeps drawing
@@ -1183,6 +1186,7 @@ function hitDummies(x, y, r, fn) { for (const d of targets()) { const dist = gdi
 const DMG_COL = {phys: [236, 240, 248], blade: [190, 220, 255], fire: [255, 150, 60], burn: [255, 196, 96], shock: [150, 212, 255]};
 function damage(d, amt, kind) {
   if (d.dead) return;
+  amt *= 1 + player.kb.dmg; // kill bonus
   const crit = kind !== "burn" && rnd() < .15;
   amt = Math.max(1, Math.round(amt * (crit ? 1.7 : 1) * (.9 + rnd() * .2)));
   if (d.buf) { // another player's knight: show the number, tell them; they apply it (and may dodge or block)
@@ -1541,14 +1545,21 @@ function updateBlades(dt) {
       const bob = Math.sin(time * 3 + b.i) * .4;
       const who = b.who || player; b.x = who.x + b.hx * e; b.y = who.y + .3; b.z = b.hz * e + bob;
       b.phase = k < 1 ? "rise" : "hover";
-      if (b.t >= b.launch) { b.phase = "fly"; b.fx = b.x; b.fy = b.y; b.fz = b.z; b.ft = 0; b.dur = Math.max(.12, gdist(b.x, b.y, b.tx, b.ty) / 120); }
+      if (b.t >= b.launch) {
+        // lock on as it launches: the nearest enemy (or dummy) close to where it was aimed
+        if (b.own) { let best = null, bd = 20; for (const d of targets()) { const dd = gdist(d.x, d.y, b.tx, b.ty); if (dd < bd) { bd = dd; best = d; } } if (best) { b.tgt = best; b.tx = best.x; b.ty = best.y; } }
+        b.phase = "fly"; b.fx = b.x; b.fy = b.y; b.fz = b.z; b.ft = 0; b.dur = Math.max(.12, gdist(b.x, b.y, b.tx, b.ty) / 120);
+      }
     } else if (b.phase === "fly") {
       b.ft += dt; const k = Math.min(1, b.ft / b.dur);
+      if (b.tgt && !b.tgt.dead && b.tgt.hp > 0) { // home in on a target that moves (a fast dodge can still escape)
+        const f = Math.min(1, dt * 6); b.tx += (b.tgt.x - b.tx) * f; b.ty += (b.tgt.y - b.ty) * f;
+      }
       b.x = b.fx + (b.tx - b.fx) * k; b.y = b.fy + (b.ty - b.fy) * k; b.z = b.fz * (1 - k * k);
       if (rnd() < .9) particles.push({x: b.x, y: b.y, z: b.z, vx: 0, vy: 0, vz: 0, g: 0, life: .2, max: .2, ch: "'", c0: [220, 240, 255], c1: [60, 110, 255]});
       if (k >= 1) { // impact
         b.phase = "stuck"; b.life = 2.4; b.z = 0;
-        if (b.own) { hitDummies(b.x, b.y, 3.6 * b.size, d => damage(d, b.dmg, "blade")); hitstop = Math.max(hitstop, .05); }
+        if (b.own) { hitDummies(b.x, b.y, 4.5 * b.size, d => damage(d, b.dmg, "blade")); hitstop = Math.max(hitstop, .05); }
         shakeAt(b.x, b.y, .35);
         rings.push({x: b.x, y: b.y, r: 1, r1: 9, t: 0, life: .35, c: [170, 210, 255]});
         tempLights.push({x: b.x, y: b.y, r: 26, i: 2.4, c: [.6, .8, 1], life: .35, max: .35});
@@ -1660,8 +1671,8 @@ function updateSlam(dt) {
     if (!blockedAt(player.x, ty)) player.y = ty;
   } else if (!s.hit) {
     s.hit = true;
-    const R = 7 + s.pow * 6, dmg = 70 + s.pow * 110;
-    hitDummies(player.x, player.y, R, (d, dist) => { damage(d, dmg * (1 - .45 * dist / R), "phys"); d.jit = .4; });
+    const R = 7 + s.pow * 6, dmg = 100 + s.pow * 160;
+    hitDummies(player.x, player.y, R, (d, dist) => { damage(d, dmg * (1 - .45 * dist / R), "phys"); d.jit = .4; meleeMana(d); });
     hitstop = Math.max(hitstop, .08 + s.pow * .06); screenFlashAdd(.06 + s.pow * .12, "#fff0d0");
     slamFx(player.x, player.y, s.pow); netFx({k: "slam", x: player.x, y: player.y, pow: s.pow});
   }
@@ -1721,7 +1732,7 @@ function update(dt) {
   if (len > 1) { ix /= len; iy /= len; len = 1; }
   player.rollCd = Math.max(0, player.rollCd - dt);
   player.hurt = Math.max(0, player.hurt - dt);
-  if (player.dead) { player.dead -= dt; len = 0; if (player.dead <= 0) respawn(); }
+  if (player.dead) { player.dead -= dt; len = 0; if (player.dead <= 0) respawn("after death"); }
   else if (time - player.lastHurt > 5) player.hp = Math.min(player.mhp, player.hp + dt * 6); // out of combat: heal
   player.shieldUp += ((player.shield ? 1 : 0) - player.shieldUp) * Math.min(1, dt * 14);
   if (player.roll) { // dodge roll: fast burst that eases out, steering locked, then he gets up
@@ -1761,7 +1772,8 @@ function update(dt) {
   } else player.running = false;
   player.atk = Math.max(0, player.atk - dt); player.atkCd = Math.max(0, player.atkCd - dt); player.recoil = Math.max(0, player.recoil - dt);
   for (let i = ghosts.length - 1; i >= 0; i--) { ghosts[i].life -= dt; if (ghosts[i].life <= 0) ghosts.splice(i, 1); }
-  player.mp = Math.min(player.mmp, player.mp + dt * 5);
+  // mana flows back faster while you keep moving: +4/s walking, +7/s running, on top of the base +5/s
+  player.mp = Math.min(player.mmp, player.mp + dt * (5 + (player.moving ? (player.running ? 7 : 4) : 0)));
   cd = Math.max(0, cd - dt);
 
   // camera
@@ -1953,7 +1965,7 @@ function drawKnight() {
   octx.globalCompositeOperation = "lighter";
   for (const g of ghosts) { octx.globalAlpha = g.life / .22 * .28; if (KN[g.fr]) drawSprite(KN[g.fr], g.flip, g.x, g.y, 0, 1, 1, CH * .3); }
   octx.globalCompositeOperation = "source-over";
-  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, time < player.prot);
+  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, isProtected());
 }
 // any knight, local or remote: shadow, team ring, sprite, visor glow, name tag
 function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot) {
@@ -2064,6 +2076,10 @@ let nearWay = null;
 function updateTravel(dt) {
   nearWay = null;
   if (!player.dead) for (const w of WAYSTONES) if (gdist(player.x, player.y, w.x, w.y) < 7) { nearWay = w; break; }
+  if (nearWay && !player.dead) { // standing in a waystone's light pours mana back in
+    player.mp = Math.min(player.mmp, player.mp + WAYSTONE_MP * dt);
+    if (player.mp < player.mmp && rnd() < dt * 12) particles.push({x: player.x + (rnd() - .5) * 4, y: player.y, z: rnd() * 2, vx: 0, vy: 0, vz: 5 + rnd() * 4, g: 0, life: .6, max: .6, ch: "+", c0: [150, 190, 255], c1: [90, 70, 230]});
+  }
   $("travelBtn").hidden = !nearWay || !!player.tp || !$("lobby").hidden;
   if (!nearWay && !$("travel").hidden) $("travel").hidden = true;
   const tp = player.tp; if (!tp) return;
@@ -2119,7 +2135,7 @@ function drawWaystones() {
     const label = `◆ ${w.name}`, ly = cy - ch - 6 * dpr;
     octx.globalAlpha = .9; octx.lineWidth = 3 * dpr; octx.strokeStyle = "rgba(10,5,25,.9)"; octx.strokeText(label, X, ly);
     octx.fillStyle = near ? "#ffffff" : "#d9c6ff"; octx.fillText(label, X, ly);
-    if (near) { octx.font = `600 ${Math.round(9 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`; octx.fillStyle = "#e4d6ff"; const hint = isTouch ? "waystone · tap Travel" : "waystone · E to travel"; octx.strokeText(hint, X, ly - 12 * dpr); octx.fillText(hint, X, ly - 12 * dpr); }
+    if (near) { octx.font = `600 ${Math.round(9 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`; octx.fillStyle = "#e4d6ff"; const hint = isTouch ? "waystone · +MP · tap Travel" : "waystone · +MP · E to travel"; octx.strokeText(hint, X, ly - 12 * dpr); octx.fillText(hint, X, ly - 12 * dpr); }
     octx.font = FONT; octx.globalCompositeOperation = "lighter";
   }
   octx.globalAlpha = 1;
@@ -2211,8 +2227,8 @@ function netFx(f) { if (net.api) net.api.send("fx", f); }
 function shakeAt(x, y, amt) { shake = Math.max(shake, amt * clamp(1.2 - gdist(x, y, player.x, player.y) / 70, 0, 1)); }
 
 function members() {
-  const m = [{id: selfId, rank: net.rank}];
-  for (const p of net.peers.values()) if (p.hello) m.push({id: p.id, rank: p.rank});
+  const m = [{id: selfId, rank: net.rank}], now = performance.now();
+  for (const p of net.peers.values()) if (p.hello && now - (p.heard || 0) < 8000) m.push({id: p.id, rank: p.rank}); // silent peers can't host
   return m.sort((a, b) => a.rank - b.rank);
 }
 // The current host stays host for as long as it's online. Only when no live host is known does the
@@ -2246,11 +2262,12 @@ async function joinRealm(want) {
       let p = net.peers.get(id);
       if (!p) { p = {id, buf: [], x: 0, y: 0, hp: 120, mhp: 120, dead: false, prot: false, face: 1, p: null}; net.peers.set(id, p); }
       if (!p.hello) addLog(`${d.name} entered the realm.`, "General", "sys");
-      Object.assign(p, {hello: true, name: String(d.name).slice(0, 16), rank: +d.rank});
+      Object.assign(p, {hello: true, name: String(d.name).slice(0, 16), rank: +d.rank, heard: performance.now()});
     },
     leave(id) { const p = net.peers.get(id); if (p && p.hello) addLog(`${p.name} left the realm.`, "General", "sys"); net.peers.delete(id); },
     st(a, id) {
       const p = net.peers.get(id); if (!p) return;
+      p.heard = performance.now();
       p.buf.push({t: performance.now(), x: a[0], y: a[1], p: {fr: a[2], flip: !!a[3], lift: a[4], tilt: a[5], sX: a[6], sY: a[7], ss: a[8], side: !!a[9]},
         hp: a[10], mhp: a[11], dead: !!a[12], face: a[13], ck: a[14], cp: a[15], prot: !!a[16], sh: a[17]});
       if (p.buf.length > 12) p.buf.shift();
@@ -2261,7 +2278,8 @@ async function joinRealm(want) {
     kill(k, id) { onKill(k.by, id); },
     snap(s, id) { applySnap(s, id); },
     joinError() { // usually a network (mobile data, strict wifi) that blocks direct peer connections
-      if (time - (net.lastJoinErr || -99) > 20) { net.lastJoinErr = time; addLog("A direct link to a knight failed; linking through the relays instead (a little laggier).", "System", "sys"); }
+      if (!net.joinErrs) net.joinErrs = 0;
+      if (net.joinErrs++ === 0) { addLog("A direct link to a knight failed; linking through the relays instead (a little laggier).", "System", "sys"); }
     },
   }, turn.iceServers);
   addLog("Entering the arena. Players who can't connect directly are linked through public relays (a little laggier).", "System", "sys");
@@ -2290,7 +2308,7 @@ function onFx(f, id) {
 
 // I've been hit by someone else's attack
 function applyHit(dmg, kind, by, ax, ay) {
-  if (player.dead || time < player.prot || net.winner) return;
+  if (player.dead || isProtected() || net.winner) return;
   if (player.roll && player.roll.t < ROLL_TIME) { floaters.push({x: player.x, y: player.y - 8, text: "DODGE", c: [200, 230, 255], big: .9, life: .8, max: .8, vx: 0}); return; }
   let blocked = false;
   if (player.shieldUp > .5 && ax !== undefined && Math.sign(ax - player.x || player.face) === player.face) { dmg *= .2; blocked = true; } // the shield faces where he faces
@@ -2321,17 +2339,37 @@ function spawnPoint() { // somewhere open in the arena, preferring spots far fro
   }
   return best || {x: S.x, y: S.y + 16};
 }
-function respawn() {
+/* Kills make you stronger for the rest of the round: each one adds damage, max HP and max MP and heals you.
+   The bonus is wiped when a new round starts, so every match begins even. */
+const KILL_DMG = .06, KILL_DMG_CAP = .6, KILL_HP = 3, KILL_HP_CAP = 15, KILL_MP = 12, KILL_MP_REFILL = 40, KILL_HEAL = .15;
+function killBonus() {
+  const kb = player.kb;
+  const hpGain = Math.max(0, Math.min(KILL_HP, KILL_HP_CAP - kb.hp));
+  kb.kills++; kb.dmg = Math.min(KILL_DMG_CAP, kb.dmg + KILL_DMG); kb.hp += hpGain; kb.mp += KILL_MP;
+  player.mhp += hpGain; player.mmp += KILL_MP;
+  player.hp = Math.min(player.mhp, player.hp + player.mhp * KILL_HEAL); player.mp = Math.min(player.mmp, player.mp + KILL_MP_REFILL);
+  floaters.push({x: player.x, y: player.y - 9, text: `+${Math.round(KILL_DMG * 100)}% DMG  +${KILL_MP} MAX MP`, c: [255, 214, 120], big: 1.1, life: 1.6, max: 1.6, vx: 0});
+  addLog(`Kill bonus: +${Math.round(kb.dmg * 100)}% damage, ${player.mmp} max MP, ${player.mhp} max HP (${kb.kills} kill${kb.kills === 1 ? "" : "s"} this round).`, "General", "gold");
+}
+function resetKillBonus() {
+  const kb = player.kb;
+  player.mhp -= kb.hp; player.mmp -= kb.mp;
+  player.kb = {kills: 0, dmg: 0, hp: 0, mp: 0};
+}
+const isProtected = () => performance.now() < player.prot;
+function respawn(why = "join") {
+  if (why === "new round") resetKillBonus();
+  console.info(`[gizmo-knight] respawn: ${why}`); // so any unexpected teleport is easy to trace
   const p = spawnPoint();
   player.x = p.x; player.y = p.y; cam.x = p.x; cam.y = p.y - 3;
   player.hp = player.mhp; player.mp = player.mmp; player.dead = 0; player.hurt = 0;
-  player.prot = time + (net.mode === "practice" ? 0 : SPAWN_PROT);
+  player.prot = performance.now() + (net.mode === "practice" ? 0 : SPAWN_PROT * 1000); // wall clock: a paused tab doesn't stay invulnerable
 }
 // a death: everyone logs it, the host keeps score
 function onKill(by, victim) {
   const msg = by === victim || !by ? `${nameOf(victim)} fell.` : `${nameOf(by)} slew ${nameOf(victim)}.`;
   addLog(msg, "General", by === selfId ? "gold" : victim === selfId ? "warn" : "");
-  if (by === selfId && victim !== selfId) { gainXP(25); banner("Enemy slain", nameOf(victim)); }
+  if (by === selfId && victim !== selfId) { gainXP(25); killBonus(); banner("Enemy slain", nameOf(victim)); }
   if (!net.host || net.hs.winner) return;
   const sc = net.hs.score;
   (sc[victim] ||= [0, 0])[1]++;
@@ -2353,21 +2391,28 @@ function hostDummyHit(i, dmg, kind) {
   net.dirty = true;
 }
 function applySnap(s, id) {
+  const theirs = s.hostSince || 0, now = performance.now();
   if (net.host) {
     // two hosts met (e.g. a slow connection made a newcomer think it was alone): the longer-standing one wins
-    const theirs = s.hostSince || 0, mine = net.hs.hostSince || 0;
+    const mine = net.hs.hostSince || 0;
     if (!(theirs < mine || (theirs === mine && id < selfId))) return;
     net.host = false; addLog("Another host was already running this realm: following them.", "System", "sys");
+  } else if (net.curHost && net.curHost !== id && net.peers.has(net.curHost) && now - net.curHostT < 3000) {
+    // a second host is broadcasting too (two groups that can't reach each other): stick with the one we
+    // follow unless this one has been hosting longer. Applying both made everyone flip between two matches.
+    const cur = net.curHostSince || 0;
+    if (!(theirs < cur || (theirs === cur && id < net.curHost))) return;
   }
-  net.curHost = id; net.curHostT = performance.now();
+  const sameHost = net.curHost === id;
+  net.curHost = id; net.curHostT = now; net.curHostSince = theirs;
   const prevRound = net.round, prevWinner = net.hs.winner;
   net.hs = s;
   net.resetAt = performance.now() + s.resetIn * 1000;
   s.dummies.forEach(([hp, dead], i) => { const d = dummies[i]; if (!d) return; d.hp = hp; if (dead && !d.dead) d.dead = 4; if (!dead && d.dead) d.dead = 0; });
-  onSharedState(prevRound, prevWinner);
+  onSharedState(prevRound, prevWinner, sameHost);
 }
 // react to colours/teams/round changes, from a snapshot or from my own host bookkeeping
-function onSharedState(prevRound, prevWinner) {
+function onSharedState(prevRound, prevWinner, sameHost = true) {
   const hs = net.hs, c = hs.colors[selfId] ?? net.color, t = hs.teams[selfId] ?? net.team;
   if (c !== net.color) { net.color = c; KN = knSet(c); }
   if (hs.mode && hs.mode !== net.mode) {
@@ -2378,10 +2423,16 @@ function onSharedState(prevRound, prevWinner) {
     net.team = t; net.placed = true; addLog(`You fight for the ${TEAM_NAME[t]} team.`, "System", "sys");
   }
   if (hs.winner && !prevWinner) banner(`${hs.winner} wins!`, `next round in ${ROUND_BREAK}s`);
-  if (hs.round !== prevRound) { net.round = hs.round; respawn(); banner(MODES[net.mode].name, net.mode === "practice" ? "no PvP · train together" : "new round · fight!"); }
+  if (hs.round !== prevRound) {
+    // only a real new round from the host we already follow respawns everyone; switching to another host
+    // (or a host handover) just adopts its round number and leaves you where you are
+    const fresh = sameHost && hs.round > prevRound;
+    net.round = hs.round;
+    if (fresh) { respawn("new round"); banner(MODES[net.mode].name, net.mode === "practice" ? "no PvP · train together" : "new round · fight!"); }
+  }
   net.winner = hs.winner;
 }
-function hostTick() {
+function hostTick(dt) {
   const hs = net.hs, ids = members().map(m => m.id), prevRound = net.round, prevWinner = net.winner;
   if (hs.mode !== "ffa") { hs.mode = "ffa"; net.dirty = true; } // Free for All only, for now: everyone in one game
   for (const k of Object.keys(hs.colors)) if (!ids.includes(k)) { delete hs.colors[k]; delete hs.teams[k]; net.dirty = true; }
@@ -2393,24 +2444,27 @@ function hostTick() {
   hs.resetIn = hs.winner ? Math.max(0, (net.resetAt - performance.now()) / 1000) : 0;
   hs.dummies = dummies.map(d => [Math.round(d.hp), d.dead > 0 ? 1 : 0]);
   onSharedState(prevRound, prevWinner);
-  net.snapT -= 1 / 60;
+  net.snapT -= dt;
   if (net.dirty || net.snapT <= 0) { net.api.send("snap", hs); net.dirty = false; net.snapT = .5; }
 }
 
 function updateNet(dt) {
   if (!net.api) return;
   electHost();
-  if (net.host) hostTick();
-  // my knight, ~15 times a second
+  if (net.host) hostTick(dt);
+  // my knight, ~15 times a second (this runs on a 15/s timer; the small margin stops it skipping every other tick)
   net.sendT -= dt;
-  if (net.sendT <= 0) {
+  if (net.sendT <= .01) {
     net.sendT = 1 / 15;
     const p = knightParams(), r2 = v => Math.round(v * 100) / 100;
     net.api.send("st", [r2(player.x), r2(player.y), p.fr, p.flip ? 1 : 0, r2(p.lift), r2(p.tilt), r2(p.sX), r2(p.sY), p.ss === null ? null : r2(p.ss), p.side ? 1 : 0,
-      Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["fire", "bolt", "blades", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), time < player.prot ? 1 : 0, r2(player.shieldUp)]);
+      Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["fire", "bolt", "blades", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), isProtected() ? 1 : 0, r2(player.shieldUp)]);
   }
-  // other knights are drawn a moment in the past, blended between the two updates around that moment:
-  // ~110 ms for direct links, ~400 ms for players reached through the relays (fewer, later updates)
+}
+// other knights are drawn a moment in the past, blended between the two updates around that moment:
+// ~110 ms for direct links, ~400 ms for players reached through the relays (fewer, later updates). Runs every frame.
+function interpolatePeers() {
+  if (!net.api) return;
   for (const p of net.peers.values()) {
     const b = p.buf; if (!b.length) continue;
     const rt = performance.now() - (net.api.viaRelay(p.id) ? 400 : 110);
@@ -2508,7 +2562,13 @@ function renderBoard() {
 
 /* ============================== loop ============================== */
 let last = performance.now(), fpsAcc = 0, fpsN = 0, msAcc = 0, miniT = 0;
-let frameErrors = 0;
+let frameErrors = 0, netLast = performance.now();
+// Networking runs on its own timer, not the draw loop: browsers pause drawing in hidden tabs (and phones when you
+// switch apps), which used to freeze a hosting player's whole match. Timers keep going (about once a second there).
+setInterval(() => {
+  const now = performance.now(), dt = Math.min(1, (now - netLast) / 1000); netLast = now;
+  try { updateNet(dt); } catch (e) { if (frameErrors++ < 5) console.error("[gizmo-knight] net error", e); }
+}, 1000 / 15);
 function frame(now) {
   requestAnimationFrame(frame); // schedule first: one bad frame must never stop the game
   const dt = Math.min(.05, (now - last) / 1000); last = now;
@@ -2517,7 +2577,7 @@ function frame(now) {
   try {
     hitstop = Math.min(hitstop, .07); // hit-stop is a beat, never a stall
     update(hitstop > 0 ? dt * .1 : dt); hitstop = Math.max(0, hitstop - dt);
-    updateNet(dt); updateScore(dt); updateTravel(dt);
+    interpolatePeers(); updateScore(dt); updateTravel(dt);
     render();
     miniT -= dt; if (miniT <= 0) { drawMini(); miniT = .1; }
     updateHUD();
@@ -2583,4 +2643,4 @@ $("mapToggle").addEventListener("click", e => {
 $("boardBtn").addEventListener("click", e => { e.stopPropagation(); const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 $("leaveBtn").addEventListener("click", e => { e.stopPropagation(); location.reload(); });
 start();
-if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net}; // dev-server-only handle for testing
+if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net, damage, livePeers}; // dev-server-only handle for testing
