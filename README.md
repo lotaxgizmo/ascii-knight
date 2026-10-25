@@ -1,6 +1,6 @@
-# ASCII Knight
+# Gizmo Knight
 
-A real-time, single-player ASCII fantasy RPG that runs in the browser. The whole world is rendered as colored text glyphs with WebGL, lit by torches, campfires, runes and spells.
+A real-time multiplayer ASCII fantasy brawler that runs in the browser. The whole world is rendered as colored text glyphs with WebGL, lit by torches, campfires, runes and spells.
 
 ## Play
 ```bash
@@ -9,17 +9,19 @@ npm run dev      # http://localhost:5173
 npm run build    # static site in dist/ (Vercel builds this automatically via vercel.json)
 ```
 
-**Desktop:** WASD / arrows or hold left mouse to move, Shift to run, Space or a quick left-click to slash, F or right-click for Fire Orb (hold to charge a Fireball with all your MP), G lightning, R summon blades, hold Q to shield, C or Ctrl to dodge roll, mouse wheel or `-` / `=` to zoom. Training dummies stand just south of the stone circle.
-**Phone:** drag anywhere to move, tap `/` to slash and `*` for Fire Orb.
+Pick a name (no account) and a mode. Everyone online shares one realm: if a host is already playing, you join their mode; otherwise your pick starts it. The host can switch everyone between **Practice** (no PvP, training dummies), **Free for All** (first to 15 kills) and **Team Deathmatch** (Red vs Blue, first to 30) from the scoreboard.
+
+**Desktop:** WASD / arrows or hold left mouse to move, Shift to run, Space or a quick left-click to slash (hold Space for a ground slam), F or right-click for fire, G lightning, R summon blades (hold any spell key to charge it with all your MP), hold Q to shield, C or Ctrl to dash, E to travel at a waystone, Tab for the scoreboard, mouse wheel or `-` / `=` to zoom.
+**Phone:** drag to move; `/` slash (hold to slam), `*` fire, `ϟ` lightning, `†` blades (hold any to charge), `◊` shield, `»` dash; pinch with two fingers to zoom.
 
 ## How it works
-- The world is generated once as a color map plus a material map (grass, water, stone, dirt, trees, flowers, glow).
-- A WebGL pass lights every cell (moonlight + up to 16 point lights), adds wind, water shimmer and mist, then picks a glyph per cell by brightness and material.
-- A second pass draws those glyphs from a font atlas.
-- The knight is AI-generated art (see `art/`): a pixel-art 8-direction run sheet and hero idle, plus a moves sheet (back idle, sword combo, block, dodge), all on green screen. `python art/build_knight.py` (needs Pillow, NumPy, SciPy) cuts each frame off the studio background, packs them into `art/knight-atlas.webp` + `art/knight-atlas.json`, which `src/main.js` imports. The game converts the frames to ASCII at runtime.
+- The world is generated once as a color map plus a material map (grass, water, stone, dirt, trees, flowers, glow), with baked hill shading.
+- A WebGL pass lights every cell (moonlight, drifting cloud shadows, up to 16 point lights), adds wind, water shimmer and mist, then picks a glyph per cell by brightness and material. A second pass draws those glyphs from a font atlas.
+- The knight is AI-generated art (see `art/`) on green screen. `python art/build_knight.py` (needs Pillow, NumPy, SciPy) cuts each frame out, packs `art/knight-atlas.webp` + `.json`, and the game converts frames to ASCII at runtime, recoloring the cape per player.
+- **Multiplayer has no game server** (`src/net.js`, [Trystero](https://github.com/dmotz/trystero)). Players find each other through public Nostr relays, then talk directly over WebRTC. The longest-standing host keeps the shared state (mode, scores, teams, cape colors, training dummies) and broadcasts it twice a second; every player holds that snapshot, and two standby hosts are lined up by random rank, so when the host leaves the next one carries on. Hits are decided by the attacker and applied by the victim (who can dodge or block).
 
 ## Roadmap
 1. ~~World look, movement, camera, lighting~~
-2. Enemies (skeleton warriors), combat, damage numbers
-3. More spells and mana
-4. Towns, NPCs, quests, loot
+2. ~~Spells, combat, damage numbers~~
+3. ~~Peer-to-peer multiplayer: Free for All, Team Deathmatch~~
+4. Enemies (skeleton warriors), towns, NPCs, quests, loot

@@ -1,6 +1,7 @@
 import "./style.css";
 import KATLAS from "../art/knight-atlas.webp";
 import KATLAS_META from "../art/knight-atlas.json";
+import {connect, selfId} from "./net.js";
 
 /* ============================== constants ============================== */
 const VS = 2.0;                 // vertical squash: 1 cell down = 2 ground units (3/4 view)
@@ -12,6 +13,12 @@ const T = {x:534, y:93};        // Moon Tower
 const LAKE = {x:845, y:515, r:80};
 const BR = {x:170, y:120};      // Broken Ring (a smaller, older stone circle in the north-west)
 const CAMPS = [{x:860, y:170, name:"Ember Camp"}, {x:150, y:590, name:"Hunter's Camp"}, {x:640, y:590, name:"Southern Camp"}];
+// waystones: glowing obelisks at every landmark; stand at one to travel to any other (final spots resolved in buildWorld)
+const WAYSTONES = [
+  {name: "Stone Circle", x: S.x + 24, y: S.y + 14}, {name: "Old Barrow", x: G.x - 8, y: G.y + 26}, {name: "Fallen Keep", x: R.x + 22, y: R.y + 26},
+  {name: "Moon Tower", x: T.x + 18, y: T.y + 12}, {name: "Broken Ring", x: BR.x + 28, y: BR.y + 14}, {name: "Mirror Lake", x: LAKE.x - LAKE.r - 18, y: LAKE.y - 34},
+  ...CAMPS.map(c => ({name: c.name, x: c.x + 20, y: c.y + 12})),
+];
 const MAX_LIGHTS = 16;
 
 /* glyph sets per material, ordered light -> dense */
@@ -77,9 +84,20 @@ function shadow(cx, cy, rx, ry, k) {
     }
 }
 function riverDist(x, y) { const xi = clamp(x | 0, 0, W - 1); return Math.abs(y - rc[xi]) * VS - rw[xi]; }
+// Slow-varying noise is sampled once on a coarse grid and read back with bilinear blending: same look,
+// a fraction of the work (world generation was the slowest part of loading on phones).
+function coarseField(step, fn) {
+  const cw = Math.ceil(W / step) + 2, ch = Math.ceil(H / step) + 2, a = new Float32Array(cw * ch);
+  for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) a[j * cw + i] = fn(i * step, j * step);
+  return (x, y) => {
+    const fx = clamp(x / step, 0, cw - 1.001), fy = clamp(y / step, 0, ch - 1.001), i = fx | 0, j = fy | 0, u = fx - i, v = fy - j, o = j * cw + i;
+    return (a[o] * (1 - u) + a[o + 1] * u) * (1 - v) + (a[o + cw] * (1 - u) + a[o + cw + 1] * u) * v;
+  };
+}
+let lakeN = (x, y) => fbm(x * 0.02 + 40, y * VS * 0.02 + 40, 3);
 function lakeDist(x, y) {
   const gx = x, gy = y * VS;
-  const ln = fbm(gx * 0.02 + 40, gy * 0.02 + 40, 3);
+  const ln = lakeN(x, y);
   return Math.hypot(gx - LAKE.x, gy - LAKE.y * VS) - (LAKE.r + (ln - .5) * 40);
 }
 const gdist = (ax, ay, bx, by) => Math.hypot(ax - bx, (ay - by) * VS);
@@ -90,7 +108,12 @@ function genGround() {
     rc[x] = 189 + Math.sin(x * 0.0081) * 38 + Math.sin(x * 0.0194 + 2) * 14 + (fbm(x * 0.0125, 7.3, 3) - .5) * 26;
     rw[x] = 10 + fbm(x * 0.019, 19.1, 2) * 9;
   }
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) HGT[y * W + x] = fbm(x * .011 + 5, y * VS * .011 + 9, 4) + fbm(x * .05, y * VS * .05, 2) * .12;
+  lakeN = coarseField(3, lakeN);
+  const hillN = coarseField(3, (x, y) => fbm(x * .011 + 5, y * VS * .011 + 9, 4));
+  const darkN = coarseField(4, (x, y) => fbm(x * .012 + 100, y * VS * .012 + 50, 3));
+  const zoneN = coarseField(6, (x, y) => fbm(x * .006 + 70, y * VS * .006 + 20, 3));
+  const dirtN = coarseField(3, (x, y) => fbm(x * .025 + 300, y * VS * .025 + 300, 3));
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) HGT[y * W + x] = hillN(x, y) + vnoise(x * .05, y * VS * .05) * .12;
   const hAt = (x, y) => HGT[clamp(y, 0, H - 1) * W + clamp(x, 0, W - 1)];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const gx = x, gy = y * VS, i = y * W + x, hh = hash2(x, y);
@@ -113,16 +136,16 @@ function genGround() {
       r *= shade; g *= shade; b *= shade;
     } else {
       const g1 = fbm(gx * .045, gy * .045, 3);
-      const dark = fbm(gx * .012 + 100, gy * .012 + 50, 3);
+      const dark = darkN(x, y);
       r = 20 + 28 * g1; g = 52 + 66 * g1; b = 26 + 22 * g1;
       // meadow types: golden dry grass, ordinary green, deep blue-green moss
-      const zone = fbm(gx * .006 + 70, gy * .006 + 20, 3);
+      const zone = zoneN(x, y);
       const dry = clamp((zone - .56) * 6, 0, 1), moss = clamp((.42 - zone) * 6, 0, 1);
       r += dry * 34 - moss * 6; g += dry * 8 + moss * 4; b += -dry * 8 + moss * 14;
       if (dark < .42) { const k = clamp(.55 + (dark - .3) * 3.5, .5, 1); r *= k; g *= k; b *= k * 1.1; }
       if (hh > .93) { r += 16; g += 34; b += 10; }
       r *= shade; g *= shade; b *= shade;
-      const dp = fbm(gx * .025 + 300, gy * .025 + 300, 3);
+      const dp = dirtN(x, y);
       if (dp > .7) { const k = .7 + hh * .5; r = 66 * k; g = 54 * k; b = 38 * k; m = 3; }
       else if (hh < .0045 && dark > .45) {
         const f = hash2(x + 7, y);
@@ -341,6 +364,22 @@ function drawTent(bx, by, sd) { // a small A-frame of patched canvas with a dark
   occluders.push({x0: bx - h * .9, x1: bx + h * .9, yTop: by - h, yBase: by});
 }
 
+function drawWaystone(bx, by) { // dark obelisk with a glowing rune channel, on a ring of ground runes
+  for (let a = 0; a < 14; a++) { const t = a / 14 * 6.283; setC(Math.round(bx + Math.cos(t) * 5), Math.round(by + 1 + Math.sin(t) * 2.2), 120, 90, 230, 7); }
+  shadow(bx + 2, by + .4, 4, 1.4, .45);
+  const h = 9;
+  for (let yy = 0; yy < h; yy++) for (let xx = -1; xx <= 1; xx++) {
+    const y = by - 1 - yy, top = yy === h - 1;
+    if (top && xx !== 0) continue;
+    if (xx === 0 && yy > 1 && yy < h - 1) { setC(bx, y, 150 + yy * 6, 120, 255, 7); continue; } // rune channel
+    const k = (xx < 0 ? 1.05 : xx > 0 ? .7 : .9) * (.8 + hash2(bx + xx, y) * .3);
+    setC(bx + xx, y, 52 * k, 54 * k, 70 * k, 2);
+  }
+  block(bx - 1, by - 1); block(bx, by - 1); block(bx + 1, by - 1);
+  staticLights.push({x: bx + .5, y: by, r: 14, i: .8, c: [.6, .45, 1], ph: rnd() * 6, kind: "rune"});
+  occluders.push({x0: bx - 1.5, x1: bx + 1.5, yTop: by - h, yBase: by});
+}
+
 function clearOf(x, y) {
   if (x < 8 || y < 6 || x > W - 9 || y > H - 6) return false;
   if (gdist(x, y, S.x, S.y) < 64) return false;
@@ -349,6 +388,7 @@ function clearOf(x, y) {
   if (gdist(x, y, T.x, T.y) < 30) return false;
   if (gdist(x, y, BR.x, BR.y) < 34) return false;
   for (const c of CAMPS) if (gdist(x, y, c.x, c.y) < 30) return false;
+  for (const w of WAYSTONES) if (gdist(x, y, w.x, w.y) < 12) return false;
   if (Math.min(riverDist(x, y), lakeDist(x, y)) < 6) return false;
   for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) if (matAt(x + dx, y + dy) === 3) return false;
   return true;
@@ -424,6 +464,16 @@ function buildWorld() {
   for (const c of CAMPS) {
     objs.push({y: c.y + 1, f: () => drawCampfire(c.x, c.y)});
     for (let k = 0; k < 3; k++) { const a = k / 3 * Math.PI * 2 + .6, tx = Math.round(c.x + Math.cos(a) * 13), ty = Math.round(c.y + Math.sin(a) * 6); objs.push({y: ty, f: () => drawTent(tx, ty, k)}); }
+  }
+  // waystones: nudge each onto open, dry ground
+  for (const w of WAYSTONES) {
+    for (let k = 0; k < 200; k++) {
+      const x = Math.round(w.x + (k ? (rnd() - .5) * k * .4 : 0)), y = Math.round(w.y + (k ? (rnd() - .5) * k * .2 : 0));
+      let ok = true;
+      for (let dy = -2; dy <= 3 && ok; dy++) for (let dx = -3; dx <= 3; dx++) { const m = matAt(x + dx, y + dy); if (m === 1 || m === 255 || BLK[(y + dy) * W + x + dx]) { ok = false; break; } }
+      if (ok) { w.x = x; w.y = y; break; }
+    }
+    objs.push({y: w.y, f: () => drawWaystone(w.x, w.y)});
   }
   // trees: round broadleaf trees in the south, pines north of the river
   for (let gy = 6; gy < H - 4; gy += 3) for (let gx = 4; gx < W - 4; gx += 5) {
@@ -637,7 +687,7 @@ function resize() {
 }
 
 /* ============================== game state ============================== */
-const player = {slam: null, shield: false, shieldUp: 0, roll: null, rollCd: 0, running: false, atk: 0, atkCd: 0, recoil: 0, combo: 0, lastAtk: -9, ghostT: 0, lastFr: 0, x: S.x, y: S.y + 16, face: 1, dx: 0, dy: -1, anim: 0, moving: false, hp: 120, mhp: 120, mp: 60, mmp: 60, lv: 1, xp: 0, gold: 0};
+const player = {tp: null, dead: 0, hurt: 0, prot: 0, lastHurt: -9, slam: null, shield: false, shieldUp: 0, roll: null, rollCd: 0, running: false, atk: 0, atkCd: 0, recoil: 0, combo: 0, lastAtk: -9, ghostT: 0, lastFr: 0, x: S.x, y: S.y + 16, face: 1, dx: 0, dy: -1, anim: 0, moving: false, hp: 120, mhp: 120, mp: 60, mmp: 60, lv: 1, xp: 0, gold: 0};
 const cam = {x: player.x, y: player.y - 3};
 const keys = {};
 const stick = {id: null, x: 0, y: 0, ox: 0, oy: 0, t0: 0};
@@ -652,14 +702,19 @@ let TLx = 0, TLy = 0, OX = 0, OY = 0;
    art/build_knight.py into art/knight-atlas.webp + .json, ASCII-fied at runtime */
 const {stand: KSTAND, frames: KFR} = KATLAS_META;
 const KROWS = 22;                // text rows for a standing knight
-let KIMG = null, KN = {};
-function bakeKnight() {
-  if (!KIMG) return;
+let KIMG = null, KN = {}, KNC = [];
+// every player wears their own cape colour: sprite sets are baked per palette index, on first use
+function bakeKnight() { if (!KIMG) return; KNC = []; KN = knSet(net.color); }
+// Frames bake lazily, the first time each one is drawn, so a new player (new colour) or a zoom change
+// costs a few frames' work spread over time instead of one long stall (matters on phones).
+function knSet(ci) {
+  return KNC[ci] || (KNC[ci] = new Proxy({}, {get: (o, n) => o[n] || (KFR[n] && KIMG ? (o[n] = bakeFrame(ci, n)) : undefined)}));
+}
+function bakeFrame(ci, name) {
   const fw = Math.max(2, Math.round(CW * .5)), fh = Math.max(3, Math.round(CH * .42));
   const ramp = " .:-=+*#%@";
-  const bgk = fw < 4 ? .85 : .62;
-  KN = {};
-  for (const name in KFR) {
+  const bgk = fw < 4 ? .85 : .62, pal = PALETTE[ci] || PALETTE[0];
+  {
     const [sx0, sy0, sw, sh, sax] = KFR[name];
     const rows = Math.max(4, Math.round(sh * KROWS / KSTAND)), cols = Math.max(2, Math.round(rows * sw / sh * fh / fw));
     const c = document.createElement("canvas"); c.width = cols; c.height = rows;
@@ -674,7 +729,8 @@ function bakeKnight() {
       for (let r = 0; r < rows; r++) for (let cc = 0; cc < cols; cc++) {
         const i = (r * cols + cc) * 4, al = d[i + 3];
         if (al < 70) continue;
-        const R = d[i] * .95, G = d[i + 1] * .94, B = Math.min(255, d[i + 2] * 1.04);
+        let R = d[i] * .95, G = d[i + 1] * .94, B = Math.min(255, d[i + 2] * 1.04);
+        if (ci > 0 && R > 50 && R > G * 1.5 && R > B * 1.3) { const k = R / 170; R = pal[0] * k; G = pal[1] * k; B = pal[2] * k; } // recolour cape + plume
         const lum = (.3 * R + .59 * G + .11 * B) / 255;
         const X = (flip ? cols - 1 - cc : cc) * fw, Y = r * fh;
         g.globalAlpha = Math.min(1, al / 200);
@@ -685,7 +741,7 @@ function bakeKnight() {
       }
       return k;
     };
-    KN[name] = {R: mk(false), L: mk(true), w: cols * fw, h: rows * fh, ax: sax / sw * cols * fw};
+    return {R: mk(false), L: mk(true), w: cols * fw, h: rows * fh, ax: sax / sw * cols * fw};
   }
 }
 
@@ -704,6 +760,7 @@ function gatherLights() {
   }
   for (const p of projectiles) L.push({x: p.x, y: p.y, r: 15 * (1 + p.pow), i: (1.5 + p.pow) * flick(p.ph, .15), c: [1, .55, .2], pri: 50});
   if (charge.on && charge.t > .08) L.push({x: player.x, y: player.y, r: 10 + chargePower() * 14, i: .8 + chargePower(), c: CHARGE_COL[charge.kind].map(v => v / 255), pri: 55});
+  for (const s of sparks) L.push({x: s.x, y: s.y, r: 16, i: 1.8, c: [.6, .78, 1], pri: 52});
   for (const b of bolts) if (b.t >= 0) L.push({x: b.x, y: b.y, r: 70, i: 5 * boltBright(b.t), c: [.7, .82, 1], pri: 90});
   for (const r of residues) { if (r.kind === "crater") continue; const k = r.life / r.max; L.push({x: r.x, y: r.y, r: r.r * 3, i: (r.kind === "fire" ? 1.1 * flick(r.x, .2) : .7 * (.7 + .3 * Math.sin(time * 40))) * k, c: r.kind === "fire" ? [1, .5, .15] : [.5, .7, 1], pri: 45}); }
   for (const t of tempLights) L.push({x: t.x, y: t.y, r: t.r, i: t.i * (t.life / t.max), c: t.c, pri: 60});
@@ -776,10 +833,10 @@ function banner(title, sub) {
 }
 let hudCache = "";
 function updateHUD() {
-  const key = `${player.hp}|${player.mp | 0}|${player.lv}|${player.xp}|${player.gold}`;
+  const key = `${Math.ceil(player.hp)}|${player.mp | 0}|${player.lv}|${player.xp}|${player.gold}`;
   if (key !== hudCache) {
     hudCache = key;
-    $("hpf").style.width = (player.hp / player.mhp * 100) + "%"; $("hpt").textContent = `${player.hp}/${player.mhp}`;
+    $("hpf").style.width = (player.hp / player.mhp * 100) + "%"; $("hpt").textContent = `${Math.ceil(player.hp)}/${player.mhp}`;
     $("mpf").style.width = (player.mp / player.mmp * 100) + "%"; $("mpt").textContent = `${player.mp | 0}/${player.mmp}`;
     $("lv").textContent = `LV ${player.lv} · ${player.gold}g`;
     $("xpf").style.width = (player.xp / xpNeed() * 100) + "%";
@@ -813,12 +870,21 @@ function buildMini() {
   x.putImageData(id, 0, 0);
 }
 function drawMini() {
-  const c = $("mini"), x = c.getContext("2d"), w = c.width, h = c.height;
+  const c = $("mini"), x = c.getContext("2d"), w = c.width, h = c.height, w0 = w;
   const sw = 220, sh = sw * h / w / VS;
   const sx = clamp(player.x - sw / 2, 0, W - sw), sy = clamp(player.y - sh / 2, 0, H - sh);
   x.imageSmoothingEnabled = false;
   x.drawImage(miniSrc, sx, sy, sw, sh, 0, 0, w, h);
   const px = (player.x - sx) / sw * w, py = (player.y - sy) / sh * h;
+  for (const p of livePeers()) { // other knights: team colour in TDM, their cape colour otherwise; enemies larger
+    if (p.dead) continue;
+    const qx = (p.x - sx) / sw * w, qy = (p.y - sy) / sh * h, z = (isEnemy(p.id) ? 3 : 2) * dpr;
+    x.fillStyle = net.mode === "tdm" ? TEAM_COL[teamOf(p.id)] : `rgb(${PALETTE[colorOf(p.id)].map(v => Math.min(255, v + 60)).join(",")})`;
+    x.fillRect(qx - z / 2, qy - z / 2, z, z);
+  }
+  x.fillStyle = "#b58cff"; // waystones
+  for (const w of WAYSTONES) { const qx = (w.x - sx) / sw * w0, qy = (w.y - sy) / sh * h; if (qx > 0 && qy > 0 && qx < w0 && qy < h) { x.beginPath(); x.moveTo(qx, qy - 3 * dpr); x.lineTo(qx + 2.5 * dpr, qy); x.lineTo(qx, qy + 3 * dpr); x.lineTo(qx - 2.5 * dpr, qy); x.fill(); } }
+  x.fillStyle = "#ffffff"; x.fillRect(px - 2.5 * dpr, py - 2.5 * dpr, 5 * dpr, 5 * dpr);
   x.fillStyle = "#ff4b3e"; x.fillRect(px - 2 * dpr, py - 2 * dpr, 4 * dpr, 4 * dpr);
   x.strokeStyle = "rgba(255,255,255,.35)"; x.lineWidth = dpr;
   const vw = Wpx / CW / sw * w, vh = Hpx / CH / sh * h;
@@ -829,6 +895,10 @@ function drawMini() {
 const CHARGE_KEYS = {KeyF: "fire", KeyK: "fire", Digit2: "fire", KeyG: "bolt", Digit3: "bolt", KeyR: "blades", Digit4: "blades", Space: "slam", KeyJ: "slam", Digit1: "slam"};
 const KEYMAP = {ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d", ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r", ShiftLeft: "run", ShiftRight: "run"};
 addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || !$("lobby").hidden) return; // typing a name, or still in the lobby
+  if (e.code === "Tab") { e.preventDefault(); if (net.api) { $("board").hidden = false; renderBoard(); } return; }
+  if (e.code === "KeyE" && !e.repeat) { $("travel").hidden ? openTravel() : ($("travel").hidden = true); return; }
+  if (e.code === "Escape") { $("travel").hidden = true; return; }
   if (KEYMAP[e.code]) { keys[KEYMAP[e.code]] = true; e.preventDefault(); }
   if (e.repeat) return;
   if (e.code === "Space" || e.code === "KeyJ" || e.code === "Digit1") { slashDir(player.dx, player.dy); startCharge("key", "slam"); e.preventDefault(); }
@@ -845,6 +915,7 @@ $("zoomOut").addEventListener("click", () => setZoom(zoomI - 1));
 $("zoomIn").addEventListener("click", () => setZoom(zoomI + 1));
 $("zoomLv").textContent = Math.round(ZOOMS[zoomI] * 100) + "%";
 addEventListener("keyup", e => {
+  if (e.code === "Tab") $("board").hidden = true;
   if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false;
   if (charge.on && charge.src === "key" && CHARGE_KEYS[e.code] === charge.kind) releaseCharge(player.dx, player.dy);
   if (e.code === "KeyQ" || e.code === "Digit5") setShield(false);
@@ -941,7 +1012,7 @@ function aimAt(cx, cy) {
   return [wx - player.x, (wy + 4 - player.y) * VS];
 }
 function slashDir(dx, dy) {
-  const l = Math.hypot(dx, dy); if (l < .001 || player.atkCd > 0 || player.roll) return;
+  const l = Math.hypot(dx, dy); if (l < .001 || player.atkCd > 0 || player.roll || player.dead) return;
   dx /= l; dy /= l;
   player.combo = time - player.lastAtk < .7 ? (player.combo + 1) % ATK_COMBO.length : 0; player.lastAtk = time;
   const mv = MELEE[player.combo];
@@ -956,9 +1027,10 @@ function slashDir(dx, dy) {
   }
   const base = Math.atan2(dy, dx), dirS = player.face;
   mv.fx(base, dirS, x0, y0, dx, dy);
+  netFx({k: "sl", c: player.combo, dx, dy});
   // hit test: an arc in front (sweep, cleave), all around (whirlwind) or the lane he lunged through
   let landed = false;
-  for (const d of dummies) {
+  for (const d of targets()) {
     if (d.dead) continue;
     const vx = d.x - player.x, vy = (d.y - player.y) * VS, dist = Math.hypot(vx, vy);
     let hit;
@@ -981,10 +1053,10 @@ function slashDir(dx, dy) {
   shake = Math.max(shake, .12);
 }
 // one swoosh of trail glyphs along an arc around the knight
-function swoosh(base, from, span, r, z, delay) {
+function swoosh(base, from, span, r, z, delay, o = player) {
   for (let k = 0; k < 22; k++) {
     const u = k / 21, a = base + from + u * span, rr = r + Math.sin(u * Math.PI) * 1.8;
-    const px = player.x + Math.cos(a) * rr, py = player.y + Math.sin(a) * rr / VS, sgn = Math.sign(span);
+    const px = o.x + Math.cos(a) * rr, py = o.y + Math.sin(a) * rr / VS, sgn = Math.sign(span);
     const tx2 = -Math.sin(a) * sgn, ty2 = Math.cos(a) * sgn / VS * 1.6;
     const ang = ((Math.atan2(ty2, tx2) % Math.PI) + Math.PI) % Math.PI;
     const ch = ang < .39 || ang > 2.75 ? "-" : ang < 1.18 ? "\\" : ang < 1.96 ? "|" : "/";
@@ -1023,7 +1095,7 @@ const charge = {on: false, t: 0, src: "", kind: "fire"};
 function noMana() { if (time - lastNoMana > 1.5) { addLog("Not enough mana.", "System", "warn"); lastNoMana = time; } }
 const baseCost = kind => ({fire: ORB_COST, bolt: BOLT_COST, blades: BLADE_COST, slam: 0})[kind];
 function startCharge(src, kind = "fire") {
-  if (charge.on || player.roll || player.slam) return;
+  if (charge.on || player.roll || player.slam || player.dead) return;
   const ready = {fire: cd <= 0, bolt: boltCd <= 0, blades: bladeCd <= 0, slam: slamCd <= 0}[kind];
   if (!ready) return;
   if (player.mp < baseCost(kind)) { noMana(); return; }
@@ -1032,8 +1104,7 @@ function startCharge(src, kind = "fire") {
 // nearest live target within maxAng (radians) of a direction (dx,dy in ground units) and within range
 function seekTarget(x, y, dx, dy, maxAng, range) {
   let best = null, bs = Infinity;
-  for (const d of dummies) {
-    if (d.dead) continue;
+  for (const d of targets()) {
     const vx = d.x - x, vy = (d.y - y) * VS, l = Math.hypot(vx, vy);
     if (l > range || l < .5) continue;
     const ang = Math.acos(clamp((vx * dx + vy * dy) / l, -1, 1));
@@ -1066,16 +1137,17 @@ function castDir(dx, dy, pow = 0) {
   // aim assist: nudge the launch toward a target that's already close to the line of fire
   const aimT = seekTarget(player.x, player.y, dx, dy, .3, 70);
   if (aimT) { const ax = aimT.x - player.x, ay = (aimT.y - player.y) * VS, al = Math.hypot(ax, ay); dx = dx * .4 + ax / al * .6; dy = dy * .4 + ay / al * .6; const nl = Math.hypot(dx, dy); dx /= nl; dy /= nl; }
-  projectiles.push({x: player.x + dx * 2.5, y: player.y + dy * 1.2 / VS, z: 3.2, vx: dx * sp, vy: dy * sp / VS, life: .9 + pow * .4, ph: rnd() * 6, pow, dmg: cost * FIRE_DMG_PER_MP});
+  const proj = {x: player.x + dx * 2.5, y: player.y + dy * 1.2 / VS, z: 3.2, vx: dx * sp, vy: dy * sp / VS, life: .9 + pow * .4, ph: rnd() * 6, pow, dmg: cost * FIRE_DMG_PER_MP};
+  projectiles.push({...proj, own: true, owner: selfId}); netFx({k: "fire", p: proj});
   for (let k = 0; k < 14 + pow * 40; k++) particles.push({x: player.x + dx * 2, y: player.y, z: 3, vx: dx * (10 + pow * 14) + (rnd() - .5) * 10, vy: (dy * (10 + pow * 14) + (rnd() - .5) * 10) / VS, vz: (rnd() - .5) * 5, g: 0, life: .3 + pow * .2, max: .5, ch: "*", c0: [255, 230, 160], c1: [255, 110, 30]});
   if (pow > 0) { shake = Math.max(shake, .15 + pow * .3); tempLights.push({x: player.x, y: player.y, r: 26 + pow * 20, i: 1.6 + pow * 2, c: [1, .55, .2], life: .25, max: .25}); }
 }
-function explode(x, y, pow = 0, dmg = ORB_COST * FIRE_DMG_PER_MP) {
+function explode(x, y, pow = 0, dmg = ORB_COST * FIRE_DMG_PER_MP, own = true) {
   // size everything off the damage carried, so a full-mana fireball reads as a catastrophe
   const big = clamp(dmg / 270, .2, 2.2);
   tempLights.push({x, y, r: 34 + big * 40, i: 3 + big * 3, c: [1, .55, .18], life: .6 + big * .5, max: .6 + big * .5});
-  shake = Math.max(shake, .4 + big * .6); hitstop = Math.max(hitstop, .03 + big * .07);
-  if (big > .5) screenFlashAdd(.08 + big * .12, "#ffb070");
+  shakeAt(x, y, .4 + big * .6); if (own) hitstop = Math.max(hitstop, .03 + big * .07);
+  if (big > .5 && gdist(x, y, player.x, player.y) < 60) screenFlashAdd(.08 + big * .12, "#ffb070");
   rings.push({x, y, r: 2, r1: 8 + big * 16, t: 0, life: .35 + big * .2, c: [255, 160, 70]});
   if (big > .6) rings.push({x, y, r: 1, r1: 5 + big * 10, t: -.06, life: .3 + big * .2, c: [255, 230, 170]});
   for (let k = 0; k < 20 + big * 30; k++) { // chunks of earth thrown up
@@ -1089,13 +1161,13 @@ function explode(x, y, pow = 0, dmg = ORB_COST * FIRE_DMG_PER_MP) {
   }
   for (let k = 0; k < 14; k++) particles.push({x: x + (rnd() - .5) * 6, y: y + (rnd() - .5) * 3, z: 1, vx: 0, vy: 0, vz: 3 + rnd() * 4, g: 0, life: 1 + rnd(), max: 2, ch: "~", c0: [120, 110, 105], c1: [30, 30, 34]});
   const R = 6 + big * 6;
-  hitDummies(x, y, R, (d, dist) => damage(d, dmg * (1 - .5 * dist / R), "fire"));
-  addResidue("fire", x, y, 3 + big * 4);
+  if (own) hitDummies(x, y, R, (d, dist) => damage(d, dmg * (1 - .5 * dist / R), "fire"));
+  addResidue("fire", x, y, 3 + big * 4, own);
 }
 
 /* ============================== combat: targets, damage, lightning, residue ============================== */
 // Practice dummies below the stone circle: they take hits, flash, burn, get shocked, break and rebuild.
-const dummies = [], floaters = [], bolts = [], residues = [], rings = [];
+const dummies = [], floaters = [], bolts = [], residues = [], rings = [], sparks = [];
 let hitstop = 0, skyFlash = 0, screenFlash = 0, boltCd = 0;
 const fxFlash = {a: 0, c: "#ffffff"}; // full-screen flash from big impacts
 function screenFlashAdd(a, c) { if (a >= fxFlash.a) { fxFlash.a = a; fxFlash.c = c; } }
@@ -1107,12 +1179,20 @@ function initDummies() {
     dummies.push({x, y, hp: 260, mhp: 260, flash: 0, jit: 0, burn: 0, burnT: 0, shock: 0, dead: 0});
   }
 }
-function hitDummies(x, y, r, fn) { for (const d of dummies) { const dist = gdist(d.x, d.y, x, y); if (!d.dead && dist < r) fn(d, dist); } }
+function hitDummies(x, y, r, fn) { for (const d of targets()) { const dist = gdist(d.x, d.y, x, y); if (dist < r) fn(d, dist); } }
 const DMG_COL = {phys: [236, 240, 248], blade: [190, 220, 255], fire: [255, 150, 60], burn: [255, 196, 96], shock: [150, 212, 255]};
 function damage(d, amt, kind) {
   if (d.dead) return;
   const crit = kind !== "burn" && rnd() < .15;
   amt = Math.max(1, Math.round(amt * (crit ? 1.7 : 1) * (.9 + rnd() * .2)));
+  if (d.buf) { // another player's knight: show the number, tell them; they apply it (and may dodge or block)
+    if (!isEnemy(d.id) || d.prot) return;
+    floaters.push({x: d.x + (rnd() - .5) * 3, y: d.y - 7, text: crit ? amt + "!" : "" + amt, c: DMG_COL[kind], big: (crit ? 1.4 : 1) * (1 + Math.min(1.2, amt / 160)), life: 1.2, max: 1.2, vx: (rnd() - .5) * 5});
+    if (kind !== "burn") hitstop = Math.max(hitstop, crit ? .09 : .05);
+    net.api.send("hit", {dmg: amt, kind, x: player.x, y: player.y}, d.id);
+    return;
+  }
+  if (net.api && !net.host) net.api.send("dh", {i: dummies.indexOf(d), dmg: amt, kind}); // the host owns the dummies
   d.hp -= amt; d.flash = .12; d.jit = Math.max(d.jit, kind === "burn" ? .05 : .2);
   if (kind !== "burn") hitstop = Math.max(hitstop, crit ? .09 : .05); // freeze a few frames so hits land with weight
   const size = (crit ? 1.4 : kind === "burn" ? .8 : 1) * (1 + Math.min(1.2, amt / 160)); // big hits get big numbers
@@ -1162,7 +1242,7 @@ function boltBright(t) {
 }
 function screenToWorld(cx, cy) { return [(TLx + cx * dpr) / CW, (TLy + cy * dpr) / CH]; }
 function castBolt(pow = 0) {
-  if (boltCd > 0) return;
+  if (boltCd > 0 || player.dead) return;
   const cost = chargeCost(pow, "bolt");
   if (player.mp < cost) { noMana(); return; }
   // aim at the cursor on desktop, otherwise ahead of the knight; then snap onto a target near that spot
@@ -1172,36 +1252,63 @@ function castBolt(pow = 0) {
   let vx = tx - player.x, vy = (ty - player.y) * VS; const l = Math.hypot(vx, vy);
   if (l > BOLT_RANGE) { vx *= BOLT_RANGE / l; vy *= BOLT_RANGE / l; tx = player.x + vx; ty = player.y + vy / VS; }
   let best = null, bd = 8;
-  for (const d of dummies) { const dd = gdist(d.x, d.y, tx, ty); if (!d.dead && dd < bd) { bd = dd; best = d; } }
+  for (const d of targets()) { const dd = gdist(d.x, d.y, tx, ty); if (!d.dead && dd < bd) { bd = dd; best = d; } }
   if (best) { tx = best.x; ty = best.y; }
   player.mp -= cost; boltCd = BOLT_CD; player.recoil = .2 + pow * .15;
   if (Math.abs(tx - player.x) > .5) player.face = tx > player.x ? 1 : -1;
   if (l > .5) { player.dx = vx / l; player.dy = vy / l; }
-  // damage follows the mana spent; a charged cast also calls extra strikes around the target and chains further
-  const dmg = cost * BOLT_DMG_PER_MP, extra = Math.round(pow * 3);
-  bolts.push({x: tx, y: ty, t: 0, life: .7, chains: [], dmg, rad: 5 + pow * 3, chainN: 2 + Math.round(pow * 3), ...makeBolt(tx, ty)});
-  for (let j = 0; j < extra; j++) {
-    const a = rnd() * 6.283, r = 5 + rnd() * 6, bx = tx + Math.cos(a) * r, by = ty + Math.sin(a) * r / VS;
-    bolts.push({x: bx, y: by, t: -.1 - j * .09 - rnd() * .05, life: .7, chains: [], dmg: dmg * .6, rad: 4, chainN: 0, ...makeBolt(bx, by)});
+  // damage follows the mana spent; a charged cast also calls extra strikes around the target and chains further.
+  // The cast itself is a fast spark shot forward from his hand; the sky strike lands wherever it hits.
+  const hx = player.x + player.face * 1.2, hy = player.y + .1;
+  const L = Math.max(1, Math.hypot(tx - hx, (ty - hy) * VS)), sp = 150;
+  const spk = {x: hx, y: hy, vx: (tx - hx) / L * sp, vy: (ty - hy) * VS / L * sp / VS, left: L / sp + .02, t: 0, pow,
+    dmg: cost * BOLT_DMG_PER_MP, rad: 5 + pow * 3, chainN: 2 + Math.round(pow * 3), extra: Math.round(pow * 3)};
+  sparks.push({...spk, own: true, owner: selfId}); netFx({k: "spark", s: spk});
+  tempLights.push({x: hx, y: hy, r: 18, i: 1.6, c: [.6, .8, 1], life: .15, max: .15});
+}
+// where the spark lands: the main sky strike, plus extra strikes around it for a charged cast
+function landSpark(s) {
+  bolts.push({x: s.x, y: s.y, t: 0, life: .7, chains: [], dmg: s.dmg, rad: s.rad, chainN: s.chainN, own: s.own, ...makeBolt(s.x, s.y)});
+  for (let j = 0; j < s.extra; j++) {
+    const a = rnd() * 6.283, r = 5 + rnd() * 6, bx = s.x + Math.cos(a) * r, by = s.y + Math.sin(a) * r / VS;
+    bolts.push({x: bx, y: by, t: -.1 - j * .09 - rnd() * .05, life: .7, chains: [], dmg: s.dmg * .6, rad: 4, chainN: 0, own: s.own, ...makeBolt(bx, by)});
+  }
+}
+function updateSparks(dt) {
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i]; s.t += dt; s.left -= dt;
+    // the same gentle guidance as the fireball, a little sharper
+    const gvx = s.vx, gvy = s.vy * VS, sp = Math.hypot(gvx, gvy), tg = seekTarget(s.x, s.y, gvx / sp, gvy / sp, .8, 40);
+    if (tg) {
+      const cur = Math.atan2(gvy, gvx), want = Math.atan2((tg.y - s.y) * VS, tg.x - s.x);
+      let da = want - cur; da = Math.atan2(Math.sin(da), Math.cos(da));
+      const na = cur + clamp(da, -2.2 * dt, 2.2 * dt); s.vx = Math.cos(na) * sp; s.vy = Math.sin(na) * sp / VS;
+    }
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    if (rnd() < .8) particles.push({x: s.x, y: s.y, z: 3, vx: (rnd() - .5) * 10, vy: (rnd() - .5) * 4, vz: (rnd() - .5) * 6, g: 0, life: .15, max: .15, ch: ["-", "/", "\\", "'"][rnd() * 4 | 0], c0: [235, 245, 255], c1: [80, 140, 255]});
+    const wall = BLK[Math.floor(s.y) * W + Math.floor(s.x)] && matAt(s.x, s.y) !== 1;
+    const hitT = bodiesFor(s.owner).some(d => gdist(d.x, d.y, s.x, s.y) < 2.6 + s.pow * 2);
+    if (wall || hitT || s.left <= 0) { landSpark(s); sparks.splice(i, 1); }
   }
 }
 function strikeBolt(b, pulse) {
-  shake = Math.max(shake, pulse ? .2 : .55);
+  shakeAt(b.x, b.y, pulse ? .2 : .55);
   const n = pulse ? 10 : 34;
   for (let k = 0; k < n; k++) {
     const a = rnd() * 6.283, s = 10 + rnd() * 28;
     particles.push({x: b.x, y: b.y, z: .5, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 12, g: -30, life: .25 + rnd() * .4, max: .65, ch: ["+", "*", "'", "`", "."][k % 5], c0: [235, 245, 255], c1: [80, 140, 255]});
   }
   if (pulse) return;
+  if (!b.own) { addResidue("shock", b.x, b.y, b.rad * .9, false); return; } // someone else's bolt: visuals only
   for (let k = 0; k < 12; k++) particles.push({x: b.x + (rnd() - .5) * 5, y: b.y + (rnd() - .5) * 2, z: .5, vx: (rnd() - .5) * 6, vy: 0, vz: 2 + rnd() * 3, g: 0, life: .8 + rnd() * .8, max: 1.6, ch: "~", c0: [150, 150, 160], c1: [30, 32, 40]});
   hitDummies(b.x, b.y, b.rad, (d, dist) => damage(d, b.dmg * (1 - .4 * dist / b.rad), "shock"));
   if (b.dmg > 80) screenFlashAdd(.1 + Math.min(.25, b.dmg / 600), "#dce8ff");
   // the charge arcs on to more targets, weaker at each jump
   let from = {x: b.x, y: b.y}, mult = .6;
-  const hitSet = new Set(dummies.filter(d => gdist(d.x, d.y, b.x, b.y) < b.rad));
+  const hitSet = new Set(targets().filter(d => gdist(d.x, d.y, b.x, b.y) < b.rad));
   for (let j = 0; j < b.chainN; j++) {
     let nx = null, nd = 16;
-    for (const d of dummies) { const dd = gdist(d.x, d.y, from.x, from.y); if (!d.dead && !hitSet.has(d) && dd < nd) { nd = dd; nx = d; } }
+    for (const d of targets()) { const dd = gdist(d.x, d.y, from.x, from.y); if (!d.dead && !hitSet.has(d) && dd < nd) { nd = dd; nx = d; } }
     if (!nx) break;
     const pts = [[from.x, from.y - 3]]; jag(from.x, from.y - 3, nx.x, nx.y - 3, .4, pts);
     b.chains.push(pts); hitSet.add(nx); damage(nx, b.dmg * mult, "shock"); mult *= .7; from = nx;
@@ -1211,7 +1318,7 @@ function strikeBolt(b, pulse) {
 
 // Residue: what a spell leaves on the ground for a few seconds. Fire leaves a scorch with flames that keep
 // burning (and hurting); lightning leaves a blackened crater with glowing cracks that still spit sparks.
-function addResidue(kind, x, y, r) {
+function addResidue(kind, x, y, r, own = true) {
   const cracks = [], flames = [];
   if (kind !== "fire") for (let k = 0, n = 6 + (rnd() * 3 | 0); k < n; k++) {
     const a = k / n * 6.283 + rnd() * .5, L = r * (.7 + rnd() * .8), pts = [[x, y]];
@@ -1222,12 +1329,13 @@ function addResidue(kind, x, y, r) {
     flames.push({x: x + Math.cos(a) * dd, y: y + Math.sin(a) * dd / VS, ph: rnd() * 6, s: .6 + rnd() * .7});
   }
   const life = kind === "fire" ? 4.5 : kind === "crater" ? 3.8 : 3.2;
-  residues.push({kind, x, y, r, life, max: life, cracks, flames, tick: .3, arcT: .1, arc: null});
+  residues.push({kind, x, y, r, life, max: life, cracks, flames, tick: .3, arcT: .1, arc: null, own});
   if (residues.length > 24) residues.shift();
 }
 
 function updateCombat(dt) {
   boltCd = Math.max(0, boltCd - dt);
+  updateSparks(dt);
   updateBlades(dt);
   skyFlash = 0; screenFlash = 0; fxFlash.a = Math.max(0, fxFlash.a - dt * 1.4);
   for (let i = rings.length - 1; i >= 0; i--) { rings[i].t += dt; if (rings[i].t > rings[i].life) rings.splice(i, 1); }
@@ -1260,7 +1368,7 @@ function updateCombat(dt) {
     const k = r.life / r.max;
     if (r.kind === "fire") {
       r.tick -= dt;
-      if (r.tick <= 0) { r.tick = .5; hitDummies(r.x, r.y, r.r * .9, d => damage(d, 3, "burn")); }
+      if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, 3, "burn")); }
       for (const f of r.flames) {
         if (rnd() < dt * 5 * k) particles.push({x: f.x, y: f.y, z: 1, vx: (rnd() - .5) * 2, vy: 0, vz: 3 + rnd() * 3, g: 0, life: .5, max: .5, ch: "'", c0: [255, 200, 100], c1: [160, 40, 10]});
         if (rnd() < dt * 1.5) particles.push({x: f.x, y: f.y, z: 2, vx: (rnd() - .5) * 2, vy: 0, vz: 2 + rnd() * 2, g: 0, life: 1.4, max: 1.4, ch: "~", c0: [110, 104, 100], c1: [26, 26, 30]});
@@ -1362,9 +1470,9 @@ function drawFloaters() {
 }
 /* ============================== guard, dodge, summoned blades ============================== */
 // Dodge roll: a quick burst along your input (or facing), steering locked, ghost trail, then a get-up beat.
-const ROLL_TIME = .38, ROLL_GETUP = .16, ROLL_DIST = 16, ROLL_CD = .75;
+const ROLL_TIME = .26, ROLL_GETUP = .12, ROLL_DIST = 30, ROLL_CD = .6; // a real burst: ~115 cells/s on average
 function startRoll() {
-  if (player.roll || player.rollCd > 0) return;
+  if (player.roll || player.rollCd > 0 || player.dead) return;
   let ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0) + stick.x, iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0) + stick.y;
   if (mouseWalk.on) { const d = aimAt(mouseWalk.cx, mouseWalk.cy); ix += d[0]; iy += d[1]; }
   let l = Math.hypot(ix, iy); if (l < .1) { ix = player.dx; iy = player.dy; l = Math.hypot(ix, iy) || 1; }
@@ -1374,7 +1482,7 @@ function startRoll() {
   charge.on = false; player.shield = false;
   for (let k = 0; k < 12; k++) particles.push({x: player.x + (rnd() - .5) * 3, y: player.y, z: .3, vx: -ix * 8 + (rnd() - .5) * 8, vy: (rnd() - .5) * 3, vz: 2 + rnd() * 3, g: -8, life: .6, max: .6, ch: [".", ",", "~"][k % 3], c0: [160, 150, 128], c1: [40, 38, 34]});
 }
-function setShield(on) { player.shield = on && !player.roll; }
+function setShield(on) { player.shield = on && !player.roll && !player.dead; }
 function drawShieldWard() { // a curved ward of runes in front of him while the shield is raised
   const k = player.shieldUp; if (k < .05) return;
   const cx = player.x + player.face * 2.2, cy = player.y - 3.4, n = 11;
@@ -1393,7 +1501,7 @@ const BLADE_COST = 35, BLADE_CD = 5, BLADE_N = 5;
 let bladeCd = 0;
 const blades = [];
 function castBlades(pow = 0) {
-  if (bladeCd > 0 || player.roll) return;
+  if (bladeCd > 0 || player.roll || player.dead) return;
   const cost = chargeCost(pow, "blades");
   if (player.mp < cost) { noMana(); return; }
   let tx, ty;
@@ -1403,13 +1511,14 @@ function castBlades(pow = 0) {
   if (l > 40) { vx *= 40 / l; vy *= 40 / l; tx = player.x + vx; ty = player.y + vy / VS; }
   if (l > .5) { player.dx = vx / l; player.dy = vy / l; if (Math.abs(vx) > .5) player.face = vx > 0 ? 1 : -1; }
   player.mp -= cost; bladeCd = BLADE_CD; player.recoil = .3;
-  const near = dummies.filter(d => !d.dead && gdist(d.x, d.y, tx, ty) < 14);
+  const near = targets().filter(d => gdist(d.x, d.y, tx, ty) < 14);
   // charged: more swords (up to double), each bigger and hitting harder with the extra mana
   const n = BLADE_N + Math.round(pow * 5), dmg = 55 * cost / BLADE_COST * BLADE_N / n, size = 1 + pow * .35, half = (n - 1) / 2;
+  const sent = [];
   for (let i = 0; i < n; i++) {
     const off = (i - half) / half; // -1..1: fan out in an arc above him
     const tgt = near.length ? near[i % near.length] : null;
-    blades.push({
+    sent.push({
       i, t: -i * .06, phase: "rise", dmg, size,
       hx: off * (6.5 + pow * 4), hz: 11 + pow * 3 - off * off * 3.6, // hover offset (relative to knight)
       x: player.x, y: player.y + .5, z: 0,
@@ -1417,6 +1526,8 @@ function castBlades(pow = 0) {
       launch: .75 + i * (n > 6 ? .08 : .13), tilt: (rnd() - .5) * .5, life: 0,
     });
   }
+  for (const b of sent) blades.push({...b, own: true, who: player});
+  netFx({k: "blades", b: sent});
   tempLights.push({x: player.x, y: player.y, r: 30, i: 2, c: [.6, .8, 1], life: .5, max: .5});
   for (let k = 0; k < 30; k++) { const a = rnd() * 6.283; particles.push({x: player.x + Math.cos(a) * 4, y: player.y + Math.sin(a) * 2, z: .5, vx: 0, vy: 0, vz: 6 + rnd() * 8, g: 0, life: .6, max: .6, ch: "|", c0: [220, 240, 255], c1: [80, 130, 255]}); }
 }
@@ -1428,7 +1539,7 @@ function updateBlades(dt) {
     if (b.phase === "rise" || b.phase === "hover") {
       const k = Math.min(1, b.t / .45), e = 1 - (1 - k) ** 3; // ease out as it rises into place
       const bob = Math.sin(time * 3 + b.i) * .4;
-      b.x = player.x + b.hx * e; b.y = player.y + .3; b.z = b.hz * e + bob;
+      const who = b.who || player; b.x = who.x + b.hx * e; b.y = who.y + .3; b.z = b.hz * e + bob;
       b.phase = k < 1 ? "rise" : "hover";
       if (b.t >= b.launch) { b.phase = "fly"; b.fx = b.x; b.fy = b.y; b.fz = b.z; b.ft = 0; b.dur = Math.max(.12, gdist(b.x, b.y, b.tx, b.ty) / 120); }
     } else if (b.phase === "fly") {
@@ -1437,12 +1548,12 @@ function updateBlades(dt) {
       if (rnd() < .9) particles.push({x: b.x, y: b.y, z: b.z, vx: 0, vy: 0, vz: 0, g: 0, life: .2, max: .2, ch: "'", c0: [220, 240, 255], c1: [60, 110, 255]});
       if (k >= 1) { // impact
         b.phase = "stuck"; b.life = 2.4; b.z = 0;
-        hitDummies(b.x, b.y, 3.6 * b.size, d => damage(d, b.dmg, "blade"));
-        shake = Math.max(shake, .35); hitstop = Math.max(hitstop, .05);
+        if (b.own) { hitDummies(b.x, b.y, 3.6 * b.size, d => damage(d, b.dmg, "blade")); hitstop = Math.max(hitstop, .05); }
+        shakeAt(b.x, b.y, .35);
         rings.push({x: b.x, y: b.y, r: 1, r1: 9, t: 0, life: .35, c: [170, 210, 255]});
         tempLights.push({x: b.x, y: b.y, r: 26, i: 2.4, c: [.6, .8, 1], life: .35, max: .35});
         for (let k2 = 0; k2 < 26; k2++) { const a = rnd() * 6.283, s = 6 + rnd() * 18; particles.push({x: b.x, y: b.y, z: .4, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 5 + rnd() * 10, g: -30, life: .6 + rnd() * .5, max: 1.1, ch: [".", ",", ":", "'"][k2 % 4], c0: [170, 150, 120], c1: [60, 50, 40]}); }
-        addResidue("shock", b.x, b.y, 2.2);
+        addResidue("shock", b.x, b.y, 2.2, false);
       }
     } else { // stuck in the ground, fading out
       b.life -= dt;
@@ -1524,8 +1635,20 @@ function drawCharge() { // what's gathering in his hand (or at his feet for the 
 const SLAM_CD = 1.4, SLAM_AIR = .34, SLAM_LAND = .28;
 let slamCd = 0;
 function doSlam(pow) {
-  if (slamCd > 0 || player.roll) return;
+  if (slamCd > 0 || player.roll || player.dead) return;
   slamCd = SLAM_CD; player.slam = {t: 0, pow, hit: false, dx: player.dx, dy: player.dy};
+}
+function slamFx(x, y, pow) { // the landing: shockwave rings, flying dirt, a cracked crater
+  const R = 7 + pow * 6;
+  shakeAt(x, y, .5 + pow * .5);
+  rings.push({x, y, r: 2, r1: R * 1.6, t: 0, life: .4, c: [240, 220, 180]});
+  rings.push({x, y, r: 1, r1: R, t: -.05, life: .35, c: [255, 250, 235]});
+  tempLights.push({x, y, r: 30 + pow * 20, i: 2.2, c: [1, .9, .7], life: .35, max: .35});
+  for (let k = 0; k < 40 + pow * 50; k++) {
+    const a = rnd() * 6.283, sp = 8 + rnd() * 22 * (1 + pow);
+    particles.push({x, y, z: .4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp / VS, vz: 6 + rnd() * 14, g: -34, life: .6 + rnd() * .6, max: 1.2, ch: [".", ",", ":", ";", "'"][k % 5], c0: [190, 160, 120], c1: [70, 56, 40]});
+  }
+  addResidue("crater", x, y, 3 + pow * 3.5, false);
 }
 function updateSlam(dt) {
   slamCd = Math.max(0, slamCd - dt);
@@ -1539,16 +1662,8 @@ function updateSlam(dt) {
     s.hit = true;
     const R = 7 + s.pow * 6, dmg = 70 + s.pow * 110;
     hitDummies(player.x, player.y, R, (d, dist) => { damage(d, dmg * (1 - .45 * dist / R), "phys"); d.jit = .4; });
-    shake = Math.max(shake, .5 + s.pow * .5); hitstop = Math.max(hitstop, .08 + s.pow * .06);
-    screenFlashAdd(.06 + s.pow * .12, "#fff0d0");
-    rings.push({x: player.x, y: player.y, r: 2, r1: R * 1.6, t: 0, life: .4, c: [240, 220, 180]});
-    rings.push({x: player.x, y: player.y, r: 1, r1: R, t: -.05, life: .35, c: [255, 250, 235]});
-    tempLights.push({x: player.x, y: player.y, r: 30 + s.pow * 20, i: 2.2, c: [1, .9, .7], life: .35, max: .35});
-    for (let k = 0; k < 40 + s.pow * 50; k++) {
-      const a = rnd() * 6.283, sp = 8 + rnd() * 22 * (1 + s.pow);
-      particles.push({x: player.x, y: player.y, z: .4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp / VS, vz: 6 + rnd() * 14, g: -34, life: .6 + rnd() * .6, max: 1.2, ch: [".", ",", ":", ";", "'"][k % 5], c0: [190, 160, 120], c1: [70, 56, 40]});
-    }
-    addResidue("crater", player.x, player.y, 3 + s.pow * 3.5);
+    hitstop = Math.max(hitstop, .08 + s.pow * .06); screenFlashAdd(.06 + s.pow * .12, "#fff0d0");
+    slamFx(player.x, player.y, s.pow); netFx({k: "slam", x: player.x, y: player.y, pow: s.pow});
   }
   if (s.t >= SLAM_AIR + SLAM_LAND) player.slam = null;
 }
@@ -1563,6 +1678,13 @@ function drawRings() { // shockwaves: a bright ring racing outward along the gro
 function drawBolts() {
   octx.lineCap = "round"; octx.lineJoin = "round";
   drawRings();
+  for (const s of sparks) { // a crackling head with a jagged tail whipping behind it
+    const sp = Math.hypot(s.vx, s.vy * VS), tl = Math.min(7 + s.pow * 5, s.t * sp), z = 3;
+    const tx = s.x - s.vx / sp * tl, ty = s.y - s.vy / sp * tl;
+    const pts = [[tx, ty - z]]; jag(tx, ty - z, s.x, s.y - z, .5, pts); drawBoltPath(pts, 1, 1, .7 + s.pow * .4);
+    if (s.t < .07) { const hx = player.x + player.face * 1.2, p2 = [[hx, player.y - 3.2]]; jag(hx, player.y - 3.2, s.x, s.y - z, .45, p2); drawBoltPath(p2, 1, .8, .5); }
+    glow(s.x, s.y - z, [150, 200, 255], 5 + s.pow * 6, 1); glyph("*", s.x, s.y - z, 240, 248, 255, 1);
+  }
   for (const b of bolts) {
     if (b.t < 0) continue;
     const br = boltBright(b.t), lead = b.t < .07 ? b.t / .07 : 1;
@@ -1598,14 +1720,21 @@ function update(dt) {
   let len = Math.hypot(ix, iy);
   if (len > 1) { ix /= len; iy /= len; len = 1; }
   player.rollCd = Math.max(0, player.rollCd - dt);
+  player.hurt = Math.max(0, player.hurt - dt);
+  if (player.dead) { player.dead -= dt; len = 0; if (player.dead <= 0) respawn(); }
+  else if (time - player.lastHurt > 5) player.hp = Math.min(player.mhp, player.hp + dt * 6); // out of combat: heal
   player.shieldUp += ((player.shield ? 1 : 0) - player.shieldUp) * Math.min(1, dt * 14);
   if (player.roll) { // dodge roll: fast burst that eases out, steering locked, then he gets up
     const r = player.roll; r.t += dt;
     const k = r.t / ROLL_TIME, sp = ROLL_DIST / ROLL_TIME * 2.2 * Math.max(0, 1 - k) ** 1.2;
-    const tx = player.x + r.dx * sp * dt, ty = player.y + r.dy * sp * dt / VS;
-    if (!blockedAt(tx, player.y)) player.x = tx;
-    if (!blockedAt(player.x, ty)) player.y = ty;
-    player.ghostT -= dt; if (player.ghostT <= 0 && k < .7) { ghosts.push({x: player.x, y: player.y, ...knightPose(), life: .22}); player.ghostT = .035; }
+    const dist = sp * dt, n = Math.max(1, Math.ceil(dist / .6)); // small sub-steps so a fast dash can't skip through walls
+    for (let s = 0; s < n; s++) {
+      const tx = player.x + r.dx * dist / n, ty = player.y + r.dy * dist / n / VS;
+      if (!blockedAt(tx, player.y)) player.x = tx;
+      if (!blockedAt(player.x, ty)) player.y = ty;
+    }
+    player.ghostT -= dt; if (player.ghostT <= 0 && k < .8) { ghosts.push({x: player.x, y: player.y, ...knightPose(), life: .28}); player.ghostT = .02; }
+    if (k < .7) for (let s = 0; s < 2; s++) particles.push({x: player.x - r.dx * 2, y: player.y - r.dy * 2 / VS, z: 2 + rnd() * 3, vx: -r.dx * 30, vy: -r.dy * 30 / VS, vz: 0, g: 0, life: .15, max: .15, ch: Math.abs(r.dx) > Math.abs(r.dy) ? "-" : "|", c0: [230, 240, 255], c1: [90, 130, 200]}); // speed streaks
     if (rnd() < dt * 30 && k < .8) particles.push({x: player.x + (rnd() - .5) * 2, y: player.y, z: .2, vx: -r.dx * 6 + (rnd() - .5) * 4, vy: (rnd() - .5) * 2, vz: 1 + rnd() * 2, g: -6, life: .5, max: .5, ch: [".", ",", "`"][rnd() * 3 | 0], c0: [150, 142, 120], c1: [40, 38, 34]});
     if (r.t >= ROLL_TIME + ROLL_GETUP) player.roll = null;
     len = 0;
@@ -1656,8 +1785,8 @@ function update(dt) {
     }
     p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
     for (let n = 0; n < 3 + p.pow * 5; n++) particles.push({x: p.x + (rnd() - .5) * (.8 + p.pow * 2), y: p.y, z: p.z + (rnd() - .5) * .8, vx: -p.vx * .08 + (rnd() - .5) * 3, vy: -p.vy * .08, vz: rnd() * 2, g: 0, life: .25 + rnd() * .25, max: .5, ch: rnd() < .5 ? "*" : ".", c0: [255, 200, 110], c1: [200, 40, 10]});
-    const hit = BLK[Math.floor(p.y) * W + Math.floor(p.x)] && matAt(p.x, p.y) !== 1 || dummies.some(d => !d.dead && gdist(d.x, d.y, p.x, p.y) < fireRadius(p.pow));
-    if (hit || p.life <= 0) { explode(p.x, p.y, p.pow, p.dmg); projectiles.splice(i, 1); }
+    const hit = BLK[Math.floor(p.y) * W + Math.floor(p.x)] && matAt(p.x, p.y) !== 1 || bodiesFor(p.owner).some(d => gdist(d.x, d.y, p.x, p.y) < fireRadius(p.pow));
+    if (hit || p.life <= 0) { explode(p.x, p.y, p.pow, p.dmg, p.own); projectiles.splice(i, 1); }
   }
   // charging a fireball: embers spiral into the sword hand, faster as it fills
   if (charge.on) {
@@ -1752,6 +1881,7 @@ function dir8(dx, dy) { return DIR8[(Math.round(Math.atan2(dy, dx) / (Math.PI / 
 // which baked frame to show right now; combat poses face right on the sheet, so they mirror for left
 function knightPose() {
   const d = dir8(player.dx, player.dy), left = player.face < 0;
+  if (player.dead || player.hurt > 0) return {fr: "hit", flip: left};
   if (player.roll) return {fr: player.roll.t < ROLL_TIME ? "roll" : "get_up", flip: player.roll.dx < -.1 || (Math.abs(player.roll.dx) <= .1 && left)};
   if (player.slam) return {fr: player.slam.t < SLAM_AIR * .45 ? "jump_start" : player.slam.t < SLAM_AIR ? "jump_air" : "land", flip: left};
   if (charge.on && charge.kind === "slam" && charge.t > CHARGE_MIN) return {fr: "crouch", flip: left};
@@ -1790,10 +1920,9 @@ function drawSprite(k, flip, x, y, tilt, sX, sY, lift, stride) {
   half(0, ax, 1); half(ax, w - ax, -1);
   octx.restore();
 }
-function drawKnight() {
-  const pose = knightPose(), k = KN[pose.fr];
-  if (!k) return;
-  const occ = occluded(player.x, player.y);
+// The local knight's draw parameters this frame (also what gets sent to other players, lift in CH units)
+function knightParams() {
+  const pose = knightPose();
   let lift = 0, tilt = 0, sX = 1, sY = 1, stride = null;
   if (player.moving && player.atk <= 0) {
     // one stride per 6 run frames: legs swing, body rises when the legs are spread and dips between steps
@@ -1814,22 +1943,37 @@ function drawKnight() {
     tilt = Math.sin(time * 1.2) * .012;
   }
   if (player.atk > 0) { const p = 1 - player.atk / .26; sX = 1 + .05 * Math.sin(p * Math.PI); }
-  // ground shadow
-  octx.globalAlpha = occ ? .25 : .55; octx.fillStyle = "#000";
-  const sh = 1 - lift / (CH * 2);
-  octx.beginPath(); octx.ellipse(sx(player.x), sy(player.y - .1), CW * 3.4 * sh, CH * .7 * sh, 0, 0, 6.283); octx.fill();
+  if (player.dead) { tilt = player.face * Math.min(1.4, (DEATH_TIME - player.dead) * 4); sY = .9; }
+  return {fr: pose.fr, flip: pose.flip, lift: lift / CH, tilt, sX, sY, ss: stride ? stride.s : null, side: stride ? stride.side : false};
+}
+function drawKnight() {
+  const p = knightParams();
   // sprint afterimages
   octx.globalCompositeOperation = "lighter";
   for (const g of ghosts) { octx.globalAlpha = g.life / .22 * .28; if (KN[g.fr]) drawSprite(KN[g.fr], g.flip, g.x, g.y, 0, 1, 1, CH * .3); }
   octx.globalCompositeOperation = "source-over";
-  octx.globalAlpha = occ ? .42 : 1;
-  drawSprite(k, pose.flip, player.x, player.y, tilt, sX, sY, lift, stride);
+  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, time < player.prot);
+}
+// any knight, local or remote: shadow, team ring, sprite, visor glow, name tag
+function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot) {
+  const set = knSet(ci), k = set[p.fr];
+  if (!k) return;
+  const occ = occluded(x, y), lift = p.lift * CH;
+  octx.globalAlpha = (occ ? .25 : .55) * alpha; octx.fillStyle = "#000";
+  const sh = 1 - lift / (CH * 2);
+  octx.beginPath(); octx.ellipse(sx(x), sy(y - .1), CW * 3.4 * sh, CH * .7 * sh, 0, 0, 6.283); octx.fill();
+  if (net.mode === "tdm") { // team ring at the feet
+    octx.globalAlpha = .8 * alpha; octx.strokeStyle = TEAM_COL[team]; octx.lineWidth = 1.5 * dpr;
+    octx.beginPath(); octx.ellipse(sx(x), sy(y - .1), CW * 3.8, CH * .8, 0, 0, 6.283); octx.stroke();
+  }
+  octx.globalAlpha = (occ ? .42 : 1) * alpha * (prot ? .55 + .3 * Math.sin(time * 18) : 1);
+  drawSprite(k, p.flip, x, y, p.tilt, p.sX, p.sY, lift, p.ss === null ? null : {s: p.ss, side: p.side});
   octx.globalCompositeOperation = "lighter";
-  glow(player.x + (player.face > 0 ? .8 : -.8), player.y - (k.h + lift) / CH * .82, [120, 220, 255], 3.4, .45 + .15 * Math.sin(time * 3));
+  glow(x + (face > 0 ? .8 : -.8), y - (k.h + lift) / CH * .82, [120, 220, 255], 3.4, (.45 + .15 * Math.sin(time * 3)) * alpha);
   octx.globalCompositeOperation = "source-over";
-  octx.font = `${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`;
-  octx.globalAlpha = .7; octx.fillStyle = "#cfd6e2";
-  octx.fillText("Aldric", sx(player.x), sy(player.y) - k.h - lift - 2 * dpr);
+  octx.font = `600 ${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`;
+  octx.globalAlpha = .85 * alpha; octx.fillStyle = net.mode === "tdm" ? TEAM_COL[team] : `rgb(${PALETTE[ci].map(v => Math.min(255, v + 70)).join(",")})`;
+  octx.fillText(name, sx(x), sy(y) - k.h - lift - 2 * dpr);
   octx.font = FONT;
 }
 function render() {
@@ -1874,10 +2018,13 @@ function render() {
   for (const w of wisps) { glow(w.x, w.y - w.z, [140, 255, 190], 9, .5); glyph("o", w.x, w.y - w.z, 210, 255, 225, .95); }
   octx.globalCompositeOperation = "source-over";
   // dummies and the knight, back to front
-  for (const d of dummies) if (d.y <= player.y) drawDummy(d);
+  // dummies and knights, back to front
+  const ents = dummies.map(d => ({y: d.y, f: () => drawDummy(d)}));
+  for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { drawKnightAt(p.x, p.y, p.p, colorOf(p.id), p.name, teamOf(p.id), p.face, p.dead ? .5 : 1, p.prot); drawRemoteExtras(p); }});
+  ents.push({y: player.y, f: drawKnight});
+  ents.sort((a, b) => a.y - b.y);
   drawBlades(true);
-  drawKnight();
-  for (const d of dummies) if (d.y > player.y) drawDummy(d);
+  for (const e of ents) e.f();
   drawBlades(false);
   octx.globalCompositeOperation = "lighter";
   drawShieldWard();
@@ -1905,7 +2052,373 @@ function render() {
   if (fxFlash.a > 0) { octx.globalAlpha = fxFlash.a; octx.fillStyle = fxFlash.c; octx.fillRect(0, 0, Wpx, Hpx); }
   octx.globalCompositeOperation = "source-over"; octx.globalAlpha = 1;
   drawFloaters();
+  drawPointers();
   octx.globalAlpha = 1;
+}
+
+/* ============================== waystone travel ============================== */
+// Stand by a waystone and press E (or tap Travel) to pick another; a short channel, then you're there.
+const TP_CHANNEL = .6;
+let nearWay = null;
+function updateTravel(dt) {
+  nearWay = null;
+  if (!player.dead) for (const w of WAYSTONES) if (gdist(player.x, player.y, w.x, w.y) < 7) { nearWay = w; break; }
+  $("travelBtn").hidden = !nearWay || !!player.tp || !$("lobby").hidden;
+  if (!nearWay && !$("travel").hidden) $("travel").hidden = true;
+  const tp = player.tp; if (!tp) return;
+  tp.t += dt;
+  if (player.dead || player.moving) { player.tp = null; addLog("Travel interrupted.", "System", "warn"); return; }
+  for (let k = 0; k < 3; k++) { // runes spiral up around him while it channels
+    const a = rnd() * 6.283, r = 3 + rnd() * 2;
+    particles.push({x: player.x + Math.cos(a) * r, y: player.y + Math.sin(a) * r / VS, z: .3, vx: -Math.sin(a) * 8, vy: Math.cos(a) * 8 / VS, vz: 6 + rnd() * 6, g: 0, life: .4, max: .4, ch: ["ᚱ", "*", "+", "'"][k % 4], c0: [220, 200, 255], c1: [110, 70, 230]});
+  }
+  if (tp.t >= TP_CHANNEL) {
+    const from = {x: player.x, y: player.y}, w = tp.dest;
+    player.tp = null;
+    player.x = w.x + (rnd() - .5) * 4; player.y = w.y + 3; cam.x = player.x; cam.y = player.y - 3;
+    tpBurst(from.x, from.y); tpBurst(player.x, player.y);
+    netFx({k: "tp", a: [from.x, from.y], b: [player.x, player.y]});
+    banner(w.name, "waystone");
+  }
+}
+function tpBurst(x, y) {
+  rings.push({x, y, r: 1, r1: 10, t: 0, life: .4, c: [180, 140, 255]});
+  tempLights.push({x, y, r: 26, i: 2.2, c: [.7, .5, 1], life: .45, max: .45});
+  for (let k = 0; k < 30; k++) { const a = rnd() * 6.283, s = 4 + rnd() * 12; particles.push({x, y, z: rnd() * 8, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 8, g: 0, life: .5 + rnd() * .4, max: .9, ch: ["*", "+", "'", "."][k % 4], c0: [235, 220, 255], c1: [100, 60, 220]}); }
+}
+function openTravel() {
+  if (!nearWay || player.dead) return;
+  const list = $("travelList"); list.textContent = "";
+  for (const w of WAYSTONES) {
+    if (w === nearWay) continue;
+    const b = document.createElement("button");
+    b.innerHTML = `<b></b><small>${Math.round(gdist(w.x, w.y, player.x, player.y))}m</small>`; b.firstChild.textContent = w.name;
+    b.addEventListener("click", e => { e.stopPropagation(); $("travel").hidden = true; player.tp = {t: 0, dest: w}; charge.on = false; });
+    list.appendChild(b);
+  }
+  $("travel").hidden = false;
+}
+$("travelBtn").addEventListener("pointerdown", e => { e.stopPropagation(); e.preventDefault(); $("travel").hidden ? openTravel() : ($("travel").hidden = true); });
+
+/* ============================== multiplayer ============================== */
+/* No server, no sign-in. Everyone in a mode's room connects directly (src/net.js). Each peer draws a random
+   rank on load; the lowest rank present is the host (assigns cape colours and teams, keeps score, owns the
+   training dummies) and broadcasts that shared state twice a second. The next two ranks are standby hosts.
+   Every peer holds the latest snapshot, so when the host leaves the next rank simply carries on from it.
+   Combat is "owner decides": your own spells test hits against what you see and tell the victim, who
+   applies it (rolling = dodge, shield = 80% block) and announces their own death. */
+const PALETTE = [[170, 30, 40], [40, 90, 210], [40, 150, 70], [210, 165, 40], [135, 60, 195], [40, 170, 190], [225, 110, 30], [215, 80, 155], [215, 215, 225], [30, 120, 110], [130, 85, 45], [95, 95, 110]];
+const TEAM_COL = ["#ff6b5e", "#62a8ff"], TEAM_NAME = ["Red", "Blue"];
+const MODES = {ffa: {name: "Free for All", goal: 15}, tdm: {name: "Team Deathmatch", goal: 30}, practice: {name: "Practice", goal: 0}};
+const DEATH_TIME = 3.5, SPAWN_PROT = 2, ROUND_BREAK = 8;
+const NAMES = ["Aldric", "Brann", "Cedric", "Daria", "Elyse", "Fenn", "Garrick", "Hale", "Isolde", "Joren", "Kael", "Lyra", "Maren", "Nyx", "Orin", "Perrin", "Rowan", "Sable", "Tamsin", "Wren"];
+let savedName = ""; try { savedName = localStorage.getItem("gk.name") || ""; } catch (e) {}
+const freshHS = () => ({mode: null, colors: {}, teams: {}, score: {}, teamScore: [0, 0], winner: null, resetIn: 0, round: 0, dummies: []});
+const net = {
+  mode: "practice", want: "practice", api: null, name: savedName || NAMES[Math.random() * NAMES.length | 0] + "-" + (10 + Math.random() * 90 | 0),
+  rank: Math.random(), color: 0, team: 0, host: true, backup: false, curHost: null, curHostT: 0, joinT: 0, placed: false,
+  peers: new Map(), hs: freshHS(), dirty: false, sendT: 0, snapT: 0, resetAt: 0, round: 0, winner: null,
+};
+const nameOf = id => id === selfId ? net.name : (net.peers.get(id) || {}).name || "someone";
+const teamOf = id => net.hs.teams[id] ?? (id === selfId ? net.team : 0);
+const colorOf = id => net.hs.colors[id] ?? 0;
+const isEnemyOf = (a, b) => a !== b && net.mode !== "practice" && (net.mode !== "tdm" || teamOf(a) !== teamOf(b));
+const isEnemy = id => isEnemyOf(selfId, id);
+const livePeers = () => [...net.peers.values()].filter(p => p.hello && p.buf.length);
+// what my attacks can hit: training dummies plus enemy knights
+function targets() {
+  const t = dummies.filter(d => !d.dead);
+  for (const p of livePeers()) if (!p.dead && !p.prot && isEnemy(p.id)) t.push(p);
+  return t;
+}
+// what a projectile from `owner` can visibly collide with (it only *damages* if it's mine)
+function bodiesFor(owner) {
+  if (owner === selfId || !owner) return targets();
+  const b = dummies.filter(d => !d.dead);
+  if (!player.dead && isEnemyOf(owner, selfId)) b.push(player);
+  for (const p of livePeers()) if (!p.dead && p.id !== owner && isEnemyOf(owner, p.id)) b.push(p);
+  return b;
+}
+function netFx(f) { if (net.api) net.api.send("fx", f); }
+function shakeAt(x, y, amt) { shake = Math.max(shake, amt * clamp(1.2 - gdist(x, y, player.x, player.y) / 70, 0, 1)); }
+
+function members() {
+  const m = [{id: selfId, rank: net.rank}];
+  for (const p of net.peers.values()) if (p.hello) m.push({id: p.id, rank: p.rank});
+  return m.sort((a, b) => a.rank - b.rank);
+}
+// The current host stays host for as long as it's online. Only when no live host is known does the
+// lowest random rank take over (everyone computes the same answer, so no negotiation is needed).
+function electHost() {
+  if (!net.api) { net.host = true; return; }
+  const m = members(), ids = new Set(m.map(e => e.id)), was = net.host;
+  const cur = net.curHost && ids.has(net.curHost) && (net.curHost === selfId || performance.now() - net.curHostT < 3000) ? net.curHost : null;
+  if (cur) net.host = cur === selfId;
+  else net.host = performance.now() - net.joinT > 2500 && m[0].id === selfId; // newcomers first listen for an existing host
+  if (net.host && !was) {
+    net.curHost = selfId; net.hs.hostSince = Date.now();
+    if (m.length > 1) addLog("The host left: you are now hosting this realm.", "System", "sys");
+  }
+  const successors = m.filter(e => e.id !== (cur || m[0].id)).slice(0, 2);
+  net.backup = successors.some(e => e.id === selfId);
+}
+
+// Everyone joins the one shared realm. If you're the first one there (you become host), your pick sets the
+// mode; otherwise you follow whatever the host is running. The host can switch modes any time.
+function joinRealm(want) {
+  net.want = want; net.mode = want;
+  $("status").querySelector(".nm").textContent = net.name;
+  net.host = false; net.joinT = performance.now();
+  net.api = connect(() => ({name: net.name, rank: net.rank}), {
+    hello(d, id) {
+      let p = net.peers.get(id);
+      if (!p) { p = {id, buf: [], x: 0, y: 0, hp: 120, mhp: 120, dead: false, prot: false, face: 1, p: null}; net.peers.set(id, p); }
+      if (!p.hello) addLog(`${d.name} entered the realm.`, "General", "sys");
+      Object.assign(p, {hello: true, name: String(d.name).slice(0, 16), rank: +d.rank});
+    },
+    leave(id) { const p = net.peers.get(id); if (p && p.hello) addLog(`${p.name} left the realm.`, "General", "sys"); net.peers.delete(id); },
+    st(a, id) {
+      const p = net.peers.get(id); if (!p) return;
+      p.buf.push({t: performance.now(), x: a[0], y: a[1], p: {fr: a[2], flip: !!a[3], lift: a[4], tilt: a[5], sX: a[6], sY: a[7], ss: a[8], side: !!a[9]},
+        hp: a[10], mhp: a[11], dead: !!a[12], face: a[13], ck: a[14], cp: a[15], prot: !!a[16], sh: a[17]});
+      if (p.buf.length > 12) p.buf.shift();
+    },
+    fx(f, id) { onFx(f, id); },
+    hit(h, id) { applyHit(h.dmg, h.kind, id, h.x, h.y); },
+    dh(h) { if (net.host) hostDummyHit(h.i, h.dmg, h.kind); },
+    kill(k, id) { onKill(k.by, id); },
+    snap(s, id) { applySnap(s, id); },
+  });
+  addLog("Entering the realm. No sign-in: whoever is online plays together, and the host picks the mode.", "System", "sys");
+  respawn();
+}
+function setRealmMode(m) { // host only: everyone follows into the new mode with fresh scores
+  if (!net.host || !MODES[m]) return;
+  const hs = net.hs;
+  hs.mode = m; hs.score = {}; hs.teamScore = [0, 0]; hs.teams = {}; hs.winner = null; hs.round++;
+  net.dirty = true;
+}
+
+// replay someone else's attack as visuals (their client decides what it hit)
+function onFx(f, id) {
+  const p = net.peers.get(id); if (!p || !p.buf.length) return;
+  if (f.k === "fire") projectiles.push({...f.p, own: false, owner: id});
+  else if (f.k === "spark") sparks.push({...f.s, t: 0, own: false, owner: id});
+  else if (f.k === "blades") for (const b of f.b) blades.push({...b, own: false, who: p});
+  else if (f.k === "slam") slamFx(f.x, f.y, f.pow);
+  else if (f.k === "tp") { tpBurst(f.a[0], f.a[1]); tpBurst(f.b[0], f.b[1]); }
+  else if (f.k === "sl") {
+    const base = Math.atan2(f.dy, f.dx), s = p.face || 1;
+    if (f.c === 3) { swoosh(base, 0, 6.283, 6.5, 3.4, .14, p); swoosh(base, Math.PI, 6.283, 5, 2.2, .14, p); }
+    else swoosh(base, -1.25 * s, 2.5 * s, 6, 3.6, .09, p);
+  }
+}
+
+// I've been hit by someone else's attack
+function applyHit(dmg, kind, by, ax, ay) {
+  if (player.dead || time < player.prot || net.winner) return;
+  if (player.roll && player.roll.t < ROLL_TIME) { floaters.push({x: player.x, y: player.y - 8, text: "DODGE", c: [200, 230, 255], big: .9, life: .8, max: .8, vx: 0}); return; }
+  let blocked = false;
+  if (player.shieldUp > .5 && ax !== undefined && Math.sign(ax - player.x || player.face) === player.face) { dmg *= .2; blocked = true; } // the shield faces where he faces
+  dmg = Math.max(1, Math.round(dmg));
+  player.hp = Math.max(0, player.hp - dmg); player.hurt = blocked ? 0 : .25; player.lastHurt = time;
+  floaters.push({x: player.x + (rnd() - .5) * 2, y: player.y - 7, text: (blocked ? "BLOCK " : "-") + dmg, c: blocked ? [255, 226, 160] : [255, 92, 80], big: 1 + Math.min(1, dmg / 120), life: 1.1, max: 1.1, vx: (rnd() - .5) * 4});
+  shake = Math.max(shake, blocked ? .15 : .3); hitstop = Math.max(hitstop, .05);
+  if (!blocked) screenFlashAdd(Math.min(.3, .08 + dmg / 400), "#ff2a20");
+  if (player.hp <= 0) die(by);
+}
+function die(by) {
+  player.dead = DEATH_TIME; player.hp = 0; charge.on = false; player.shield = false; player.roll = null; player.slam = null;
+  banner("You were slain", `by ${nameOf(by)}`);
+  for (let k = 0; k < 50; k++) { const a = rnd() * 6.283, s = 4 + rnd() * 14; particles.push({x: player.x, y: player.y, z: 2 + rnd() * 4, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 8, g: -20, life: .8 + rnd() * .6, max: 1.4, ch: ["*", "'", ".", "+"][k % 4], c0: [255, 140, 120], c1: [90, 20, 20]}); }
+  if (net.api) net.api.send("kill", {by});
+  onKill(by, selfId);
+}
+function spawnPoint() { // anywhere open on the map, preferring spots far from enemies
+  let best = null, bestD = -1;
+  for (let k = 0; k < 80; k++) {
+    const x = 14 + rnd() * (W - 28), y = 10 + rnd() * (H - 20), m = matAt(x, y);
+    if (blockedAt(x, y) || m === 1 || m === 4 || m === 2) continue;
+    let dmin = 999;
+    for (const p of livePeers()) if (!p.dead && isEnemy(p.id)) dmin = Math.min(dmin, gdist(x, y, p.x, p.y));
+    if (dmin > bestD) { bestD = dmin; best = {x, y}; }
+    if (dmin > 140) break;
+  }
+  return best || {x: S.x, y: S.y + 16};
+}
+function respawn() {
+  const p = spawnPoint();
+  player.x = p.x; player.y = p.y; cam.x = p.x; cam.y = p.y - 3;
+  player.hp = player.mhp; player.mp = player.mmp; player.dead = 0; player.hurt = 0;
+  player.prot = time + (net.mode === "practice" ? 0 : SPAWN_PROT);
+}
+// a death: everyone logs it, the host keeps score
+function onKill(by, victim) {
+  const msg = by === victim || !by ? `${nameOf(victim)} fell.` : `${nameOf(by)} slew ${nameOf(victim)}.`;
+  addLog(msg, "General", by === selfId ? "gold" : victim === selfId ? "warn" : "");
+  if (by === selfId && victim !== selfId) { gainXP(25); banner("Enemy slain", nameOf(victim)); }
+  if (!net.host || net.hs.winner) return;
+  const sc = net.hs.score;
+  (sc[victim] ||= [0, 0])[1]++;
+  if (by && by !== victim) {
+    (sc[by] ||= [0, 0])[0]++;
+    if (net.mode === "tdm" && teamOf(by) !== teamOf(victim)) net.hs.teamScore[teamOf(by)]++;
+  }
+  const goal = MODES[net.mode].goal;
+  if (net.mode === "tdm") { const t = net.hs.teamScore.findIndex(v => v >= goal); if (t >= 0) net.hs.winner = `${TEAM_NAME[t]} team`; }
+  else if (by && sc[by] && sc[by][0] >= goal) net.hs.winner = nameOf(by);
+  if (net.hs.winner) net.resetAt = performance.now() + ROUND_BREAK * 1000;
+  net.dirty = true;
+}
+function hostDummyHit(i, dmg, kind) {
+  const d = dummies[i]; if (!d || d.dead) return;
+  d.hp -= dmg; d.flash = .12; d.jit = .2;
+  if (kind === "fire") d.burn = Math.max(d.burn, 2.4);
+  if (d.hp <= 0) { d.dead = 4; d.hp = 0; d.burn = 0; }
+  net.dirty = true;
+}
+function applySnap(s, id) {
+  if (net.host) {
+    // two hosts met (e.g. a slow connection made a newcomer think it was alone): the longer-standing one wins
+    const theirs = s.hostSince || 0, mine = net.hs.hostSince || 0;
+    if (!(theirs < mine || (theirs === mine && id < selfId))) return;
+    net.host = false; addLog("Another host was already running this realm: following them.", "System", "sys");
+  }
+  net.curHost = id; net.curHostT = performance.now();
+  const prevRound = net.round, prevWinner = net.hs.winner;
+  net.hs = s;
+  net.resetAt = performance.now() + s.resetIn * 1000;
+  s.dummies.forEach(([hp, dead], i) => { const d = dummies[i]; if (!d) return; d.hp = hp; if (dead && !d.dead) d.dead = 4; if (!dead && d.dead) d.dead = 0; });
+  onSharedState(prevRound, prevWinner);
+}
+// react to colours/teams/round changes, from a snapshot or from my own host bookkeeping
+function onSharedState(prevRound, prevWinner) {
+  const hs = net.hs, c = hs.colors[selfId] ?? net.color, t = hs.teams[selfId] ?? net.team;
+  if (c !== net.color) { net.color = c; KN = knSet(c); }
+  if (hs.mode && hs.mode !== net.mode) {
+    net.mode = hs.mode; net.placed = false;
+    addLog(`The host chose ${MODES[hs.mode].name}.`, "System", "gold");
+  }
+  if (net.mode === "tdm" && hs.teams[selfId] !== undefined && (t !== net.team || !net.placed)) {
+    net.team = t; net.placed = true; addLog(`You fight for the ${TEAM_NAME[t]} team.`, "System", "sys");
+  }
+  if (hs.winner && !prevWinner) banner(`${hs.winner} wins!`, `next round in ${ROUND_BREAK}s`);
+  if (hs.round !== prevRound) { net.round = hs.round; respawn(); banner(MODES[net.mode].name, net.mode === "practice" ? "no PvP · train together" : "new round · fight!"); }
+  net.winner = hs.winner;
+}
+function hostTick() {
+  const hs = net.hs, ids = members().map(m => m.id), prevRound = net.round, prevWinner = net.winner;
+  if (!hs.mode) { hs.mode = net.want; net.dirty = true; }
+  for (const k of Object.keys(hs.colors)) if (!ids.includes(k)) { delete hs.colors[k]; delete hs.teams[k]; net.dirty = true; }
+  for (const id of ids) {
+    if (hs.colors[id] === undefined) { const used = new Set(Object.values(hs.colors)); let c = 0; while (used.has(c)) c++; hs.colors[id] = c % PALETTE.length; net.dirty = true; }
+    if (net.mode === "tdm" && hs.teams[id] === undefined) { const n = [0, 0]; for (const t of Object.values(hs.teams)) n[t]++; hs.teams[id] = n[0] <= n[1] ? 0 : 1; net.dirty = true; }
+  }
+  if (hs.winner && performance.now() > net.resetAt) { hs.score = {}; hs.teamScore = [0, 0]; hs.winner = null; hs.round++; net.dirty = true; }
+  hs.resetIn = hs.winner ? Math.max(0, (net.resetAt - performance.now()) / 1000) : 0;
+  hs.dummies = dummies.map(d => [Math.round(d.hp), d.dead > 0 ? 1 : 0]);
+  onSharedState(prevRound, prevWinner);
+  net.snapT -= 1 / 60;
+  if (net.dirty || net.snapT <= 0) { net.api.send("snap", hs); net.dirty = false; net.snapT = .5; }
+}
+
+function updateNet(dt) {
+  if (!net.api) return;
+  electHost();
+  if (net.host) hostTick();
+  // my knight, ~15 times a second
+  net.sendT -= dt;
+  if (net.sendT <= 0) {
+    net.sendT = 1 / 15;
+    const p = knightParams(), r2 = v => Math.round(v * 100) / 100;
+    net.api.send("st", [r2(player.x), r2(player.y), p.fr, p.flip ? 1 : 0, r2(p.lift), r2(p.tilt), r2(p.sX), r2(p.sY), p.ss === null ? null : r2(p.ss), p.side ? 1 : 0,
+      Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["fire", "bolt", "blades", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), time < player.prot ? 1 : 0, r2(player.shieldUp)]);
+  }
+  // other knights are drawn ~110 ms in the past, blended between the two updates around that moment
+  const rt = performance.now() - 110;
+  for (const p of net.peers.values()) {
+    const b = p.buf; if (!b.length) continue;
+    let a = b[0], c = b[b.length - 1];
+    for (let i = 0; i < b.length - 1; i++) if (b[i].t <= rt && b[i + 1].t >= rt) { a = b[i]; c = b[i + 1]; break; }
+    const k = c.t > a.t ? clamp((rt - a.t) / (c.t - a.t), 0, 1) : 1;
+    const jump = Math.hypot(c.x - a.x, c.y - a.y) > 30; // respawned: snap instead of sliding across the map
+    p.x = jump ? c.x : a.x + (c.x - a.x) * k; p.y = jump ? c.y : a.y + (c.y - a.y) * k;
+    Object.assign(p, {p: c.p, hp: c.hp, mhp: c.mhp, dead: c.dead, face: c.face, ck: c.ck, cp: c.cp, prot: c.prot, sh: c.sh});
+  }
+}
+// arrows at the screen edge pointing at knights you can't see (enemies bold, allies faint)
+function drawPointers() {
+  if (!net.api) return;
+  const m = 28 * dpr;
+  for (const p of livePeers()) {
+    if (p.dead) continue;
+    const X = sx(p.x), Y = sy(p.y - 4);
+    if (X > m && X < Wpx - m && Y > m && Y < Hpx - m) continue;
+    const cx = Wpx / 2, cy = Hpx / 2, dx = X - cx, dy = Y - cy;
+    const s = Math.min((Wpx / 2 - m) / Math.abs(dx || 1e-6), (Hpx / 2 - m) / Math.abs(dy || 1e-6));
+    const ex = cx + dx * s, ey = cy + dy * s, ang = Math.atan2(dy, dx), enemy = isEnemy(p.id);
+    const col = net.mode === "tdm" ? TEAM_COL[teamOf(p.id)] : `rgb(${PALETTE[colorOf(p.id)].map(v => Math.min(255, v + 60)).join(",")})`;
+    octx.save(); octx.translate(ex, ey); octx.rotate(ang);
+    octx.globalAlpha = enemy ? .95 : .45; octx.fillStyle = col; octx.strokeStyle = "rgba(0,0,0,.8)"; octx.lineWidth = 2 * dpr;
+    const z = (enemy ? 11 : 8) * dpr;
+    octx.beginPath(); octx.moveTo(z, 0); octx.lineTo(-z * .7, -z * .7); octx.lineTo(-z * .35, 0); octx.lineTo(-z * .7, z * .7); octx.closePath(); octx.stroke(); octx.fill();
+    octx.restore();
+    if (enemy) {
+      octx.globalAlpha = .9; octx.font = `600 ${Math.round(9 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`; octx.fillStyle = col;
+      octx.fillText(`${p.name} ${Math.round(gdist(p.x, p.y, player.x, player.y))}m`, ex - Math.cos(ang) * 30 * dpr, ey - Math.sin(ang) * 18 * dpr);
+      octx.font = FONT;
+    }
+  }
+  octx.globalAlpha = 1;
+}
+function drawRemoteExtras(p) { // their HP bar (enemies) and any charge gathering in their hand
+  if (p.dead) return;
+  const k = knSet(colorOf(p.id))[p.p.fr]; if (!k) return;
+  if (isEnemy(p.id) && p.hp < p.mhp) {
+    const X = sx(p.x) - 4 * CW, Y = sy(p.y) - k.h - p.p.lift * CH - 14 * dpr, w = 8 * CW, h = Math.max(2, 3 * dpr);
+    octx.globalAlpha = .85; octx.fillStyle = "#0b0b0f"; octx.fillRect(X - dpr, Y - dpr, w + 2 * dpr, h + 2 * dpr);
+    octx.fillStyle = "#c4322b"; octx.fillRect(X, Y, w * Math.max(0, p.hp / p.mhp), h);
+  }
+  if (p.ck >= 0) {
+    octx.globalCompositeOperation = "lighter";
+    glow(p.x + p.face * 1.2, p.y - 3.2, CHARGE_COL[["fire", "bolt", "blades", "slam"][p.ck]], 4 + p.cp * 14, .5 + p.cp * .5);
+    octx.globalCompositeOperation = "source-over";
+  }
+  if (p.sh > .5) { octx.globalCompositeOperation = "lighter"; glow(p.x + p.face * 2.2, p.y - 3.4, [140, 200, 255], 8, .35); octx.globalCompositeOperation = "source-over"; }
+}
+let scoreT = 0;
+function updateScore(dt) {
+  scoreT -= dt; if (scoreT > 0) return; scoreT = .25;
+  const el = $("score");
+  if (!net.api) { el.hidden = true; return; }
+  el.hidden = false;
+  const hs = net.hs, goal = MODES[net.mode].goal, n = members().length;
+  let line;
+  if (net.mode === "practice") line = "no PvP · train on the dummies together";
+  else if (net.mode === "tdm") line = `<b style="color:${TEAM_COL[0]}">RED ${hs.teamScore[0]}</b> — <b style="color:${TEAM_COL[1]}">${hs.teamScore[1]} BLUE</b>`;
+  else {
+    const mine = (hs.score[selfId] || [0])[0];
+    let lead = null, lk = -1; for (const [id, s] of Object.entries(hs.score)) if (s[0] > lk) { lk = s[0]; lead = id; }
+    line = `You <b>${mine}</b> · Leader <b>${lead ? nameOf(lead) : "—"} ${Math.max(0, lk)}</b>`;
+  }
+  const role = net.host ? " · you are host" : net.backup ? " · standby host" : "";
+  $("modeSel").hidden = !net.host;
+  $("modeSel").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === net.mode));
+  $("scoreLine").innerHTML = `${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
+  $("scoreSub").textContent = `${n} knight${n === 1 ? "" : "s"} online${role}${hs.winner ? ` · ${hs.winner} wins! next round in ${Math.ceil(Math.max(0, (net.resetAt - performance.now()) / 1000))}s` : ""}`;
+  if (!$("board").hidden) renderBoard();
+}
+function renderBoard() {
+  const rows = members().map(m => ({id: m.id, s: net.hs.score[m.id] || [0, 0]})).sort((a, b) => b.s[0] - a.s[0] || a.s[1] - b.s[1]);
+  const b = $("board"); b.textContent = "";
+  const head = document.createElement("div"); head.className = "row head"; head.innerHTML = "<span>Knight</span><span>Kills</span><span>Deaths</span>"; b.appendChild(head);
+  for (const r of rows) {
+    const d = document.createElement("div"); d.className = "row" + (r.id === selfId ? " me" : "");
+    const c = net.mode === "tdm" ? TEAM_COL[teamOf(r.id)] : `rgb(${PALETTE[colorOf(r.id)].join(",")})`;
+    const nm = document.createElement("span"); nm.textContent = nameOf(r.id); nm.style.borderLeft = `3px solid ${c}`; nm.style.paddingLeft = "6px";
+    const k = document.createElement("span"); k.textContent = r.s[0]; const de = document.createElement("span"); de.textContent = r.s[1];
+    d.append(nm, k, de); b.appendChild(d);
+  }
 }
 
 /* ============================== loop ============================== */
@@ -1914,6 +2427,7 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   const t0 = performance.now();
   update(hitstop > 0 ? dt * .08 : dt); hitstop = Math.max(0, hitstop - dt); // hit-stop: the world nearly freezes for a beat
+  updateNet(dt); updateScore(dt); updateTravel(dt);
   render();
   miniT -= dt; if (miniT <= 0) { drawMini(); miniT = .1; }
   updateHUD();
@@ -1926,7 +2440,9 @@ async function start() {
   try { await Promise.race([document.fonts.load('600 16px "IBM Plex Mono"'), new Promise(r => setTimeout(r, 1500))]); } catch (e) {}
   await new Promise(r => setTimeout(r, 30));
   KIMG = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = KATLAS; });
+  const tw = performance.now();
   buildWorld();
+  console.info(`[gizmo-knight] world built in ${Math.round(performance.now() - tw)} ms`);
   try { P1 = program(FS_CELLS); P2 = program(FS_DRAW); }
   catch (e) { console.error(e); fail("The renderer failed to start on this device."); return; }
   texWorld = makeTex(); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(COL.buffer));
@@ -1936,11 +2452,23 @@ async function start() {
   addEventListener("resize", resize);
   addLog("You awaken inside the Stone Circle.", "General");
   addLog(isTouch ? "Drag to move. / slash, hold * to charge fire, ϟ lightning, † blades, ◊ shield, » roll." : "Move: WASD or hold left mouse. Shift: run. Space/click: slash. F/right-click (hold to charge): fire. G: lightning. R: blades. Q (hold): shield. C/Ctrl: roll.", "System", "sys");
-  addLog("Training dummies stand just south of the circle.", "System", "sys");
-  addLog("Explore to discover the realm's regions.", "System", "sys");
   region = "Stone Circle"; visited.add(region);
-  setTimeout(() => banner("The Stone Circle", "Moonlit Vale"), 600);
   last = performance.now(); requestAnimationFrame(frame);
   setTimeout(() => $("loading").classList.add("gone"), 150);
+  showLobby();
 }
+// the lobby: pick a name (no account) and a mode; the world already renders behind it
+function showLobby() {
+  const lb = $("lobby"), inp = $("pname");
+  lb.hidden = false; inp.value = net.name;
+  lb.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => {
+    const nm = inp.value.trim().replace(/\s+/g, " ").slice(0, 16);
+    if (nm) net.name = nm;
+    try { localStorage.setItem("gk.name", net.name); } catch (e) {}
+    lb.hidden = true;
+    joinRealm(b.dataset.mode);
+  }, {once: true}));
+}
+$("modeSel").addEventListener("click", e => { e.stopPropagation(); const m = e.target.closest("button"); if (m) setRealmMode(m.dataset.m); });
+$("score").addEventListener("click", e => { if (e.target.id === "leaveBtn") { location.reload(); return; } const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 start();
