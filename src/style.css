@@ -119,3 +119,4 @@ canvas{display:block}
   #rollBtn{right:calc(138px + env(safe-area-inset-right,0px));bottom:calc(14px + env(safe-area-inset-bottom,0px))}
 }
 @media (prefers-reduced-motion:reduce){#banner,#loading{transition:none}}
+button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}

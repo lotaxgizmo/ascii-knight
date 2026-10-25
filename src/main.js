@@ -4,12 +4,14 @@ import KATLAS_META from "../art/knight-atlas.json";
 
 /* ============================== constants ============================== */
 const VS = 2.0;                 // vertical squash: 1 cell down = 2 ground units (3/4 view)
-const W = 640, H = 400;         // world size in cells
-const S = {x:320, y:222};       // stone circle centre / spawn
-const G = {x:452, y:204};       // Old Barrow (graveyard)
-const R = {x:178, y:284};       // Fallen Keep (ruins)
-const T = {x:334, y:58};        // Moon Tower
-const LAKE = {x:528, y:322, r:56};
+const W = 1024, H = 640;        // world size in cells
+const S = {x:512, y:355};       // stone circle centre / spawn
+const G = {x:723, y:326};       // Old Barrow (graveyard)
+const R = {x:285, y:454};       // Fallen Keep (ruins)
+const T = {x:534, y:93};        // Moon Tower
+const LAKE = {x:845, y:515, r:80};
+const BR = {x:170, y:120};      // Broken Ring (a smaller, older stone circle in the north-west)
+const CAMPS = [{x:860, y:170, name:"Ember Camp"}, {x:150, y:590, name:"Hunter's Camp"}, {x:640, y:590, name:"Southern Camp"}];
 const MAX_LIGHTS = 16;
 
 /* glyph sets per material, ordered light -> dense */
@@ -82,32 +84,44 @@ function lakeDist(x, y) {
 }
 const gdist = (ax, ay, bx, by) => Math.hypot(ax - bx, (ay - by) * VS);
 
+const HGT = new Float32Array(W * H); // rolling-hill height field, used for baked hill shading
 function genGround() {
   for (let x = 0; x < W; x++) {
-    rc[x] = 118 + Math.sin(x * 0.013) * 24 + Math.sin(x * 0.031 + 2) * 9 + (fbm(x * 0.02, 7.3, 3) - .5) * 16;
-    rw[x] = 10 + fbm(x * 0.03, 19.1, 2) * 9;
+    rc[x] = 189 + Math.sin(x * 0.0081) * 38 + Math.sin(x * 0.0194 + 2) * 14 + (fbm(x * 0.0125, 7.3, 3) - .5) * 26;
+    rw[x] = 10 + fbm(x * 0.019, 19.1, 2) * 9;
   }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) HGT[y * W + x] = fbm(x * .011 + 5, y * VS * .011 + 9, 4) + fbm(x * .05, y * VS * .05, 2) * .12;
+  const hAt = (x, y) => HGT[clamp(y, 0, H - 1) * W + clamp(x, 0, W - 1)];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const gx = x, gy = y * VS, i = y * W + x, hh = hash2(x, y);
     const sd = Math.min(riverDist(x, y), lakeDist(x, y));
+    // moonlight from the upper left: slopes facing it brighten, slopes facing away fall into shadow
+    const shade = clamp(1 + ((hAt(x - 1, y) - hAt(x + 1, y)) * .8 + (hAt(x, y - 1) - hAt(x, y + 1)) * 1.1) * 16, .62, 1.38);
     let r, g, b, m = 0;
     if (sd < 0) {
       const depth = Math.min(1, -sd / 10), n = fbm(gx * .08, gy * .08, 2);
       const k = .75 + n * .5;
-      r = (20 - 9 * depth) * k; g = (40 - 14 * depth) * k; b = (64 - 12 * depth) * k;
-      if (sd > -1.6 && hh > .45) { r = 120; g = 140; b = 156; }
+      r = (18 - 9 * depth) * k; g = (40 - 16 * depth) * k; b = (68 - 10 * depth) * k;
+      if (sd > -1.4 && hh > .4) { r = 130; g = 150; b = 165; } // foam where water laps the bank
       m = 1; BLK[i] = 1;
-    } else if (sd < 3.5) {
-      const k = .55 + hh * .8;
-      r = 64 * k; g = 66 * k; b = 68 * k;
-      if (hash2(x + 3, y) > .7) { g *= 1.2; r *= .85; }
-      m = 2;
+    } else if (sd < 3.5) { // wet mud and pebbles along the shore, with reeds
+      const k = .55 + hh * .7;
+      r = 70 * k; g = 62 * k; b = 52 * k;
+      if (hash2(x + 3, y) > .8) { r = 92 * k; g = 94 * k; b = 98 * k; m = 2; }
+      if (sd > 1.2 && hash2(x, y + 7) > .62) { r = 46 * k; g = 96 * k; b = 44 * k; m = 0; } // reeds
+      else if (m !== 2) m = 3;
+      r *= shade; g *= shade; b *= shade;
     } else {
       const g1 = fbm(gx * .045, gy * .045, 3);
       const dark = fbm(gx * .012 + 100, gy * .012 + 50, 3);
       r = 20 + 28 * g1; g = 52 + 66 * g1; b = 26 + 22 * g1;
+      // meadow types: golden dry grass, ordinary green, deep blue-green moss
+      const zone = fbm(gx * .006 + 70, gy * .006 + 20, 3);
+      const dry = clamp((zone - .56) * 6, 0, 1), moss = clamp((.42 - zone) * 6, 0, 1);
+      r += dry * 34 - moss * 6; g += dry * 8 + moss * 4; b += -dry * 8 + moss * 14;
       if (dark < .42) { const k = clamp(.55 + (dark - .3) * 3.5, .5, 1); r *= k; g *= k; b *= k * 1.1; }
       if (hh > .93) { r += 16; g += 34; b += 10; }
+      r *= shade; g *= shade; b *= shade;
       const dp = fbm(gx * .025 + 300, gy * .025 + 300, 3);
       if (dp > .7) { const k = .7 + hh * .5; r = 66 * k; g = 54 * k; b = 38 * k; m = 3; }
       else if (hh < .0045 && dark > .45) {
@@ -272,12 +286,69 @@ function drawCampfire(cx, cy) {
   staticLights.push({x: cx + .5, y: cy + .5, r: 26, i: 1.35, c: [1.0, .55, .2], ph: 0, kind: 'fire'});
 }
 
+function drawPine(bx, by, h, sd) { // layered conifer: stacked tiers that widen toward the base
+  shadow(bx + h * .3, by + .4, h * .55, h * .18, .4);
+  for (let yy = 0; yy < 3; yy++) setC(bx, by - 1 - yy, 54, 38, 26, 3);
+  block(bx, by - 1); block(bx - 1, by - 1);
+  const hue = hash2(sd | 0, 9);
+  for (let yy = 2; yy < h; yy++) {
+    const t = (yy - 2) / (h - 2), tier = (yy - 2) % 4;
+    const half = (1 - t) * h * .42 * (1 - tier * .12) + .4;
+    const y = by - 1 - yy;
+    for (let x = Math.floor(bx - half); x <= bx + half; x++) {
+      const u = (x + .5 - bx) / (half + .01);
+      const lit = clamp(.62 - u * .32 + (tier === 0 ? -.18 : .1) + vnoise(x * .7, y * .9 + sd) * .3, .25, 1.2);
+      setC(x, y, (16 + hue * 8) * lit * 1.3, (50 + hue * 10) * lit * 1.3, (40 + hue * 6) * lit * 1.3, 4);
+    }
+  }
+  occluders.push({x0: bx - h * .42, x1: bx + h * .42, yTop: by - h, yBase: by});
+}
+function drawRock(bx, by, r, sd) { // a lumpy boulder lit from the upper left, mossy at the base
+  shadow(bx + r * .6, by + .3, r * 1.5, r * .55, .45);
+  const ry = r * .75;
+  for (let y = Math.floor(by - ry * 2); y <= by; y++) for (let x = Math.floor(bx - r - 1); x <= bx + r + 1; x++) {
+    const dx = (x + .5 - bx) / r, dy = (y + .5 - (by - ry)) / ry, d = dx * dx + dy * dy;
+    if (d > 1 + (vnoise(x * .9 + sd, y) - .5) * .5) continue;
+    const lit = clamp(.75 - dx * .35 - dy * .3 + hash2(x, y) * .2, .35, 1.25);
+    let c = [96 * lit, 98 * lit, 104 * lit];
+    if (dy > .45 && hash2(x + 1, y) > .5) c = [c[0] * .7, c[1] * 1.05, c[2] * .7];
+    setC(x, y, c[0], c[1], c[2], 2); if (dy > .2) block(x, y);
+  }
+}
+function drawBush(bx, by, r, sd) {
+  shadow(bx + r * .5, by + .3, r * 1.3, r * .5, .45);
+  const ry = r * .6, berries = hash2(sd, 3) > .7;
+  for (let y = Math.floor(by - ry * 2); y <= by; y++) for (let x = Math.floor(bx - r - 1); x <= bx + r + 1; x++) {
+    const dx = (x + .5 - bx) / r, dy = (y + .5 - (by - ry)) / ry, d = dx * dx + dy * dy;
+    if (d > 1 + (vnoise(x * .8 + sd, y * 1.1) - .5) * .6) continue;
+    const lit = clamp(.7 - dx * .3 - dy * .35 + vnoise(x * .6, y + sd) * .35, .3, 1.25);
+    if (berries && hash2(x, y + 2) > .85) setC(x, y, 170, 40, 60, 5);
+    else setC(x, y, 26 * lit * 1.3, 64 * lit * 1.3, 34 * lit * 1.3, 4);
+  }
+}
+function drawTent(bx, by, sd) { // a small A-frame of patched canvas with a dark doorway
+  shadow(bx + 3, by + .4, 6, 1.6, .5);
+  const h = 6, cloth = [[150, 120, 80], [120, 90, 110], [96, 110, 130]][sd % 3];
+  for (let yy = 0; yy < h; yy++) {
+    const half = (h - yy) * .9, y = by - 1 - yy;
+    for (let x = Math.floor(bx - half); x <= bx + half; x++) {
+      const u = (x + .5 - bx) / (half + .01), door = Math.abs(u) < .28 && yy < 3;
+      const k = door ? .15 : (u < 0 ? 1.05 : .72) * (.85 + hash2(x, y) * .25);
+      setC(x, y, cloth[0] * k, cloth[1] * k, cloth[2] * k, 3);
+      if (yy < 2) block(x, y);
+    }
+  }
+  occluders.push({x0: bx - h * .9, x1: bx + h * .9, yTop: by - h, yBase: by});
+}
+
 function clearOf(x, y) {
   if (x < 8 || y < 6 || x > W - 9 || y > H - 6) return false;
   if (gdist(x, y, S.x, S.y) < 64) return false;
   if (gdist(x, y, G.x, G.y) < 36) return false;
   if (gdist(x, y, R.x, R.y) < 52) return false;
   if (gdist(x, y, T.x, T.y) < 30) return false;
+  if (gdist(x, y, BR.x, BR.y) < 34) return false;
+  for (const c of CAMPS) if (gdist(x, y, c.x, c.y) < 30) return false;
   if (Math.min(riverDist(x, y), lakeDist(x, y)) < 6) return false;
   for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) if (matAt(x + dx, y + dy) === 3) return false;
   return true;
@@ -286,12 +357,17 @@ function clearOf(x, y) {
 function buildWorld() {
   genGround();
   // paths
-  stampPath([[S.x, S.y + 6], [372, 226], [412, 214], [G.x, G.y + 4]], 2.4);
-  stampPath([[S.x - 4, S.y + 8], [280, 242], [230, 264], [R.x + 10, R.y - 4]], 2.4);
-  const BX = 328;
-  stampPath([[S.x, S.y - 10], [318, 190], [324, 156], [BX, rc[BX] + rw[BX] / VS + 4]], 2.2);
-  stampPath([[BX, rc[BX] - rw[BX] / VS - 4], [331, 86], [T.x, T.y + 3]], 2.2);
-  drawBridge(BX);
+  stampPath([[S.x, S.y + 6], [595, 362], [659, 342], [G.x, G.y + 4]], 2.4);
+  stampPath([[S.x - 4, S.y + 8], [448, 387], [368, 422], [R.x + 10, R.y - 4]], 2.4);
+  const BX = 525, BX2 = 210;
+  stampPath([[S.x, S.y - 10], [509, 304], [518, 250], [BX, rc[BX] + rw[BX] / VS + 4]], 2.2);
+  stampPath([[BX, rc[BX] - rw[BX] / VS - 4], [530, 138], [T.x, T.y + 3]], 2.2);
+  stampPath([[R.x - 6, R.y - 14], [250, 380], [BX2, rc[BX2] + rw[BX2] / VS + 4]], 2);
+  stampPath([[BX2, rc[BX2] - rw[BX2] / VS - 4], [BR.x + 8, BR.y + 12]], 2);
+  stampPath([[G.x + 10, G.y - 8], [800, 260], [CAMPS[0].x - 6, CAMPS[0].y + 8]], 2);
+  stampPath([[R.x - 8, R.y + 14], [CAMPS[1].x + 10, CAMPS[1].y - 6]], 2);
+  stampPath([[S.x + 4, S.y + 16], [600, 480], [CAMPS[2].x, CAMPS[2].y - 8]], 2);
+  drawBridge(BX); drawBridge(BX2);
   // graveyard ground desaturate
   for (let y = G.y - 22; y < G.y + 22; y++) for (let x = G.x - 46; x < G.x + 46; x++) {
     if (gdist(x, y, G.x, G.y) < 40 + (hash2(x, y) - .5) * 6 && MAT[y * W + x] !== 1) {
@@ -338,7 +414,18 @@ function buildWorld() {
   }
   // tower
   objs.push({y: T.y, f: () => drawTower(T.x, T.y)});
-  // trees
+  // broken ring: a smaller, half-fallen stone circle
+  for (let k = 0; k < 7; k++) {
+    const a = k / 7 * Math.PI * 2 + .2, bx = Math.round(BR.x + Math.cos(a) * 20), by = Math.round(BR.y + Math.sin(a) * 20 / VS);
+    if (k % 3 === 2) { for (let j = 0; j < 7; j++) setC(bx - 3 + j, by - 1, 80, 84, 94, 2); continue; } // toppled
+    objs.push({y: by, f: () => drawStone(bx, by, 5, 8 + (k * 5) % 6, k * 9.7, k % 2 === 0)});
+  }
+  // camps: campfire ringed by tents
+  for (const c of CAMPS) {
+    objs.push({y: c.y + 1, f: () => drawCampfire(c.x, c.y)});
+    for (let k = 0; k < 3; k++) { const a = k / 3 * Math.PI * 2 + .6, tx = Math.round(c.x + Math.cos(a) * 13), ty = Math.round(c.y + Math.sin(a) * 6); objs.push({y: ty, f: () => drawTent(tx, ty, k)}); }
+  }
+  // trees: round broadleaf trees in the south, pines north of the river
   for (let gy = 6; gy < H - 4; gy += 3) for (let gx = 4; gx < W - 4; gx += 5) {
     const x = gx + (rnd() * 5 | 0), y = gy + (rnd() * 3 | 0);
     const f = fbm(x * .008 + 11, y * VS * .008 + 23, 3);
@@ -347,10 +434,18 @@ function buildWorld() {
     if (rnd() > p) continue;
     if (!edge && !clearOf(x, y)) continue;
     if (edge && MAT[y * W + x] === 1) continue;
-    const r = 4 + rnd() * 4.5;
+    const r = 4 + rnd() * 4.5, north = y < rc[clamp(x, 0, W - 1)] - 6;
     // glowing mushrooms under the forest
     if (f > .56 && rnd() < .25) { const mx = x + (rnd() * 8 - 4 | 0), my = y + 2; if (MAT[my * W + mx] === 0) setC(mx, my, 70, 210, 190, 7); }
-    objs.push({y, f: () => drawTree(x, y, r, x * .37 + y)});
+    if (north && rnd() < .7) objs.push({y, f: () => drawPine(x, y, 9 + rnd() * 7, x * .37 + y)});
+    else objs.push({y, f: () => drawTree(x, y, r, x * .37 + y)});
+  }
+  // boulders and bushes scattered across open ground
+  for (let k = 0; k < W * H / 1400; k++) {
+    const x = 10 + rnd() * (W - 20) | 0, y = 8 + rnd() * (H - 16) | 0;
+    if (!clearOf(x, y)) continue;
+    if (rnd() < .45) objs.push({y, f: () => drawRock(x, y, 1 + rnd() * 2.2, k)});
+    else objs.push({y, f: () => drawBush(x, y, 1.6 + rnd() * 1.6, k)});
   }
   objs.sort((a, b) => a.y - b.y);
   for (const o of objs) o.f();
@@ -362,13 +457,15 @@ function regionAt(x, y) {
   if (gdist(x, y, G.x, G.y) < 44) return "Old Barrow";
   if (gdist(x, y, R.x, R.y) < 56) return "Fallen Keep";
   if (gdist(x, y, T.x, T.y) < 46) return "Moon Tower";
+  if (gdist(x, y, BR.x, BR.y) < 40) return "Broken Ring";
+  for (const c of CAMPS) if (gdist(x, y, c.x, c.y) < 34) return c.name;
   if (lakeDist(x, y) < 14) return "Mirror Lake";
   if (riverDist(x, y) < 14) return "Silver River";
   if (y < rc[clamp(x | 0, 0, W - 1)]) return "Northern Wilds";
   if (fbm(x * .008 + 11, y * VS * .008 + 23, 3) > .52) return "Whisperwood";
   return "Moonlit Vale";
 }
-const REGION_XP = {"Stone Circle": 0, "Old Barrow": 40, "Fallen Keep": 40, "Moon Tower": 60, "Mirror Lake": 30, "Silver River": 20, "Northern Wilds": 30, "Whisperwood": 25, "Moonlit Vale": 15};
+const REGION_XP = {"Broken Ring": 50, "Ember Camp": 35, "Hunter's Camp": 35, "Southern Camp": 35, "Stone Circle": 0, "Old Barrow": 40, "Fallen Keep": 40, "Moon Tower": 60, "Mirror Lake": 30, "Silver River": 20, "Northern Wilds": 30, "Whisperwood": 25, "Moonlit Vale": 15};
 
 /* ============================== WebGL ============================== */
 const glc = document.getElementById("gl"), ov = document.getElementById("ov"), octx = ov.getContext("2d");
@@ -413,7 +510,9 @@ void main(){
     jit+=(wind-.5)*.35;
     c*=.9+wind*.25;
   }
-  vec3 L=uAmb;
+  // slow cloud shadows drifting across the moonlight (point lights shine through them)
+  float cl=fbm(g*.0045+vec2(uTime*.012,uTime*.005));
+  vec3 L=uAmb*(.72+.38*smoothstep(.3,.7,cl));
   for(int i=0;i<${MAX_LIGHTS};i++){
     vec4 l=uL[i];
     if(l.w<=0.)continue;
@@ -451,7 +550,10 @@ void main(){
   vec4 cd=texture2D(uCells,(cell+.5)/uSize);
   float idx=floor(cd.a*255.+.5);
   float gA=texture2D(uAtlas,vec2((idx+lc.x)/uN,lc.y)).r;
-  vec3 col=cd.rgb*(gA+.11);
+  vec3 col=cd.rgb*(gA+.15);
+  // grade: shadows lean cool blue, highlights stay warm
+  float lum=dot(col,vec3(.3,.59,.11));
+  col=mix(col*vec3(.86,.98,1.18),col*vec3(1.04,1.,.94),smoothstep(.05,.45,lum));
   vec2 q=gl_FragCoord.xy/uRes-.5;
   col*=1.-dot(q,q)*.8;
   gl_FragColor=vec4(col,1.);
@@ -538,7 +640,7 @@ function resize() {
 const player = {slam: null, shield: false, shieldUp: 0, roll: null, rollCd: 0, running: false, atk: 0, atkCd: 0, recoil: 0, combo: 0, lastAtk: -9, ghostT: 0, lastFr: 0, x: S.x, y: S.y + 16, face: 1, dx: 0, dy: -1, anim: 0, moving: false, hp: 120, mhp: 120, mp: 60, mmp: 60, lv: 1, xp: 0, gold: 0};
 const cam = {x: player.x, y: player.y - 3};
 const keys = {};
-const stick = {id: null, x: 0, y: 0, ox: 0, oy: 0};
+const stick = {id: null, x: 0, y: 0, ox: 0, oy: 0, t0: 0};
 let shake = 0, cd = 0, time = 0, region = "", lastNoMana = 0;
 const ghosts = [];
 const visited = new Set();
@@ -751,7 +853,10 @@ addEventListener("blur", () => { for (const k in keys) keys[k] = false; charge.o
 const touch = $("touch"), stickEl = $("stick"), knob = $("knob");
 // two fingers on the world = pinch zoom (the move stick is dropped while pinching)
 const pinchPts = new Map();
-let pinchD = 0;
+let pinchD = 0, pinching = false;
+// stop the browser's own page zoom (double-tap / pinch, incl. iOS Safari, which ignores user-scalable=no)
+for (const ev of ["gesturestart", "gesturechange", "gestureend", "dblclick"]) document.addEventListener(ev, e => e.preventDefault(), {passive: false});
+document.addEventListener("touchmove", e => { if (e.touches.length > 1) e.preventDefault(); }, {passive: false});
 const pinchDist = () => { const [a, b] = [...pinchPts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 // mouse: hold left button to walk toward the cursor, a quick click slashes, right-click casts
 const mouseWalk = {on: false, id: null, cx: 0, cy: 0, t0: 0}, mouseXY = {x: 0, y: 0};
@@ -766,11 +871,15 @@ touch.addEventListener("pointerdown", e => {
   }
   pinchPts.set(e.pointerId, {x: e.clientX, y: e.clientY});
   if (pinchPts.size === 2) {
-    touch.setPointerCapture(e.pointerId);
+    // only a deliberate pinch zooms: both fingers land together, before any movement. A second finger
+    // tapping while you're already moving is ignored instead of zooming by accident.
+    const fresh = performance.now() - stick.t0 < 220 && Math.hypot(stick.x, stick.y) < .25;
+    if (!fresh) { pinchPts.delete(e.pointerId); return; }
+    touch.setPointerCapture(e.pointerId); pinching = true;
     stick.id = null; stick.x = stick.y = 0; stickEl.hidden = true; pinchD = pinchDist(); return;
   }
   if (stick.id !== null || pinchPts.size > 2) return;
-  stick.id = e.pointerId; stick.ox = e.clientX; stick.oy = e.clientY; stick.x = stick.y = 0;
+  stick.id = e.pointerId; stick.ox = e.clientX; stick.oy = e.clientY; stick.x = stick.y = 0; stick.t0 = performance.now();
   stickEl.style.left = e.clientX + "px"; stickEl.style.top = e.clientY + "px"; knob.style.transform = ""; stickEl.hidden = false;
   touch.setPointerCapture(e.pointerId);
 });
@@ -778,9 +887,9 @@ touch.addEventListener("pointermove", e => {
   if (e.pointerType === "mouse") { mouseXY.x = e.clientX; mouseXY.y = e.clientY; mouseXY.seen = true; }
   if (e.pointerId === mouseWalk.id) { mouseWalk.cx = e.clientX; mouseWalk.cy = e.clientY; return; }
   if (pinchPts.has(e.pointerId)) pinchPts.set(e.pointerId, {x: e.clientX, y: e.clientY});
-  if (pinchPts.size === 2) {
+  if (pinching && pinchPts.size === 2) {
     const d = pinchDist();
-    if (d > pinchD * 1.18) { setZoom(zoomI + 1); pinchD = d; } else if (d < pinchD / 1.18) { setZoom(zoomI - 1); pinchD = d; }
+    if (d > pinchD * 1.3) { setZoom(zoomI + 1); pinchD = d; } else if (d < pinchD / 1.3) { setZoom(zoomI - 1); pinchD = d; }
     return;
   }
   if (e.pointerId !== stick.id) return;
@@ -798,7 +907,7 @@ const endStick = e => {
     if (e.type === "pointerup" && performance.now() - mouseWalk.t0 < 200) { const d = aimAt(e.clientX, e.clientY); slashDir(d[0], d[1]); }
     mouseWalk.on = false; mouseWalk.id = null; return;
   }
-  pinchPts.delete(e.pointerId); if (e.pointerId !== stick.id) return; stick.id = null; stick.x = stick.y = 0; stickEl.hidden = true; };
+  pinchPts.delete(e.pointerId); if (pinchPts.size < 2) pinching = false; if (e.pointerId !== stick.id) return; stick.id = null; stick.x = stick.y = 0; stickEl.hidden = true; };
 touch.addEventListener("pointerup", endStick); touch.addEventListener("pointercancel", endStick);
 touch.addEventListener("contextmenu", e => e.preventDefault());
 const castBtn = $("castBtn");
