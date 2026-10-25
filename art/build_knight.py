@@ -1,5 +1,5 @@
 """Slice the green-screen knight sprite sheets, chroma-key them, and pack every
-frame into one atlas + frame table, then embed it into index.html.
+frame into one atlas + frame table that src/main.js imports.
 
     python art/build_knight.py   -> art/knight-atlas.webp, art/knight-atlas.json, art/preview.png
 """
@@ -118,30 +118,12 @@ def main():
     out = os.path.join(HERE, "knight-atlas.webp")
     atlas.save(out, "WEBP", quality=88, alpha_quality=90, method=6)
     with open(os.path.join(HERE, "knight-atlas.json"), "w") as f:
-        json.dump(table, f, separators=(",", ":"))
+        json.dump({"stand": STAND_H, "frames": table}, f, separators=(",", ":"))
     prev = Image.new("RGBA", atlas.size, (200, 60, 200, 255))
     prev.alpha_composite(atlas)
     prev = prev.convert("RGB")
     prev.resize((prev.width * 2, prev.height * 2), Image.NEAREST).save(os.path.join(HERE, "preview.png"))
     print(len(frames), "frames", atlas.size, os.path.getsize(out), "bytes")
-    embed(out, table)
-
-
-def embed(atlas_path, table):
-    """Swap the knight atlas line in index.html (file:// pages can't read pixels of external images)."""
-    import base64
-    page = os.path.join(HERE, "..", "index.html")
-    with open(page, encoding="utf-8", newline="") as f:
-        lines = f.read().split("\n")
-    b64 = base64.b64encode(open(atlas_path, "rb").read()).decode()
-    line = (f'const KATLAS = "data:image/webp;base64,{b64}", KSTAND = {STAND_H}, '
-            f'KFR = {json.dumps(table, separators=(",", ":"))};')
-    idx = [i for i, l in enumerate(lines) if l.startswith("const KATLAS =") or l.startswith("const KSRC =")]
-    assert len(idx) == 1, idx
-    lines[idx[0]] = line + ("\r" if lines[idx[0]].endswith("\r") or lines[0].endswith("\r") else "")
-    with open(page, "w", encoding="utf-8", newline="") as f:
-        f.write("\n".join(lines))
-    print("embedded into index.html line", idx[0] + 1)
 
 
 main()
