@@ -1,7 +1,7 @@
 import "./style.css";
 import KATLAS from "../art/knight-atlas.webp";
 import KATLAS_META from "../art/knight-atlas.json";
-import {connect, selfId} from "./net.js";
+import {connect, fetchTurn, selfId, relaysUp, RELAY_COUNT} from "./net.js";
 
 /* ============================== constants ============================== */
 const VS = 2.0;                 // vertical squash: 1 cell down = 2 ground units (3/4 view)
@@ -1567,7 +1567,7 @@ function drawGiantSword(X, Y, ang, L, a) { // X,Y = screen position of the tip; 
   const bw = L * .055, bl = L * .72, gw = L * .2, gl = L * .17;
   // spectral glow
   octx.globalCompositeOperation = "lighter";
-  octx.shadowColor = "rgba(110,170,255,.95)"; octx.shadowBlur = 14 * dpr;
+  if (!isTouch) { octx.shadowColor = "rgba(110,170,255,.95)"; octx.shadowBlur = 14 * dpr; } // blur is very slow on phones
   octx.fillStyle = "rgba(90,140,255,.35)";
   octx.beginPath(); octx.moveTo(4 * dpr, 0); octx.lineTo(-bl, -bw * 1.9); octx.lineTo(-bl, bw * 1.9); octx.closePath(); octx.fill();
   octx.shadowBlur = 0; octx.globalCompositeOperation = "source-over";
@@ -1820,7 +1820,8 @@ function update(dt) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.vz += p.g * dt;
     if (p.z < 0) { p.z = 0; p.vz *= -.3; p.vx *= .6; p.vy *= .6; }
   }
-  if (particles.length > 1400) particles.splice(0, particles.length - 1400);
+  const PCAP = isTouch ? 420 : 1400; // phones draw every particle as text: keep the count sane
+  if (particles.length > PCAP) particles.splice(0, particles.length - PCAP);
 
   // wisps + fireflies
   for (const w of wisps) {
@@ -2232,10 +2233,14 @@ function electHost() {
 
 // Everyone joins the one shared realm. If you're the first one there (you become host), your pick sets the
 // mode; otherwise you follow whatever the host is running. The host can switch modes any time.
-function joinRealm(want) {
+async function joinRealm(want) {
   net.want = want; net.mode = want;
   $("status").querySelector(".nm").textContent = net.name;
-  net.host = false; net.joinT = performance.now();
+  net.host = false; net.joinT = performance.now(); net.connecting = true;
+  respawn();
+  const turn = await fetchTurn(); // relay credentials for networks that block direct connections
+  net.turnOk = turn.iceServers.some(s => [].concat(s.urls).some(u => String(u).startsWith("turn")));
+  net.joinT = performance.now(); net.connecting = false;
   net.api = connect(() => ({name: net.name, rank: net.rank}), {
     hello(d, id) {
       let p = net.peers.get(id);
@@ -2255,9 +2260,11 @@ function joinRealm(want) {
     dh(h) { if (net.host) hostDummyHit(h.i, h.dmg, h.kind); },
     kill(k, id) { onKill(k.by, id); },
     snap(s, id) { applySnap(s, id); },
-  });
-  addLog("Entering the realm. No sign-in: whoever is online plays together, and the host picks the mode.", "System", "sys");
-  respawn();
+    joinError() { // usually a network (mobile data, strict wifi) that blocks direct peer connections
+      if (time - (net.lastJoinErr || -99) > 20) { net.lastJoinErr = time; addLog("A knight tried to join but your networks couldn't connect directly. Wi-Fi usually works better than mobile data.", "System", "warn"); }
+    },
+  }, turn.iceServers);
+  addLog(`Entering the arena. ${net.turnOk ? "Relay ready: players on any network can connect." : "No relay configured: players on strict networks (often mobile data) may not connect."}`, "System", net.turnOk ? "sys" : "warn");
 }
 function setRealmMode(m) { // host only: everyone follows into the new mode with fresh scores
   if (!net.host || !MODES[m]) return;
@@ -2301,15 +2308,16 @@ function die(by) {
   if (net.api) net.api.send("kill", {by});
   onKill(by, selfId);
 }
-function spawnPoint() { // anywhere open on the map, preferring spots far from enemies
+const ARENA_R = 70; // everyone fights in one place: the clearing around the Stone Circle
+function spawnPoint() { // somewhere open in the arena, preferring spots far from enemies
   let best = null, bestD = -1;
   for (let k = 0; k < 80; k++) {
-    const x = 14 + rnd() * (W - 28), y = 10 + rnd() * (H - 20), m = matAt(x, y);
+    const a = rnd() * 6.283, r = 14 + Math.sqrt(rnd()) * ARENA_R, x = S.x + Math.cos(a) * r, y = S.y + Math.sin(a) * r / VS, m = matAt(x, y);
     if (blockedAt(x, y) || m === 1 || m === 4 || m === 2) continue;
     let dmin = 999;
     for (const p of livePeers()) if (!p.dead && isEnemy(p.id)) dmin = Math.min(dmin, gdist(x, y, p.x, p.y));
     if (dmin > bestD) { bestD = dmin; best = {x, y}; }
-    if (dmin > 140) break;
+    if (dmin > 50) break;
   }
   return best || {x: S.x, y: S.y + 16};
 }
@@ -2375,7 +2383,7 @@ function onSharedState(prevRound, prevWinner) {
 }
 function hostTick() {
   const hs = net.hs, ids = members().map(m => m.id), prevRound = net.round, prevWinner = net.winner;
-  if (!hs.mode) { hs.mode = net.want; net.dirty = true; }
+  if (hs.mode !== "ffa") { hs.mode = "ffa"; net.dirty = true; } // Free for All only, for now: everyone in one game
   for (const k of Object.keys(hs.colors)) if (!ids.includes(k)) { delete hs.colors[k]; delete hs.teams[k]; net.dirty = true; }
   for (const id of ids) {
     if (hs.colors[id] === undefined) { const used = new Set(Object.values(hs.colors)); let c = 0; while (used.has(c)) c++; hs.colors[id] = c % PALETTE.length; net.dirty = true; }
@@ -2469,7 +2477,7 @@ function updateScore(dt) {
     line = `You <b>${mine}</b> · Leader <b>${lead ? nameOf(lead) : "—"} ${Math.max(0, lk)}</b>`;
   }
   const role = net.host ? " · you are host" : net.backup ? " · standby host" : "";
-  $("modeSel").hidden = !net.host;
+  $("modeSel").hidden = true; // mode switching is off while the game is Free for All only
   $("modeSel").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === net.mode));
   $("scoreLine").innerHTML = `${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
   // the collapsed chip: just the mode and the one number that matters
@@ -2477,7 +2485,9 @@ function updateScore(dt) {
   if (net.mode === "tdm") mini = `<b style="color:${TEAM_COL[0]}">RED ${hs.teamScore[0]}</b>–<b style="color:${TEAM_COL[1]}">${hs.teamScore[1]} BLUE</b>`;
   else if (net.mode === "ffa") mini = `FFA · you ${(hs.score[selfId] || [0])[0]}/${goal}`;
   else mini = "Practice";
-  $("scoreMini").innerHTML = `${mini} · ${n} online${hs.winner ? " · ★" : ""}`;
+  // when alone, say whether we're actually reachable, so "nobody here" and "can't connect" look different
+  const ru = relaysUp(), status = n > 1 ? `${n} online` : ru ? `searching for knights · ${ru}/${RELAY_COUNT} relays${net.turnOk ? " · TURN on" : ""}` : "connecting…";
+  $("scoreMini").innerHTML = `${mini} · ${status}${hs.winner ? " · ★" : ""}`;
   $("scoreSub").textContent = `${n} knight${n === 1 ? "" : "s"} online${role}${hs.winner ? ` · ${hs.winner} wins! next round in ${Math.ceil(Math.max(0, (net.resetAt - performance.now()) / 1000))}s` : ""}`;
   if (!$("board").hidden) renderBoard();
 }
@@ -2496,18 +2506,27 @@ function renderBoard() {
 
 /* ============================== loop ============================== */
 let last = performance.now(), fpsAcc = 0, fpsN = 0, msAcc = 0, miniT = 0;
+let frameErrors = 0;
 function frame(now) {
+  requestAnimationFrame(frame); // schedule first: one bad frame must never stop the game
   const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (glLost) return;
   const t0 = performance.now();
-  update(hitstop > 0 ? dt * .08 : dt); hitstop = Math.max(0, hitstop - dt); // hit-stop: the world nearly freezes for a beat
-  updateNet(dt); updateScore(dt); updateTravel(dt);
-  render();
-  miniT -= dt; if (miniT <= 0) { drawMini(); miniT = .1; }
-  updateHUD();
+  try {
+    hitstop = Math.min(hitstop, .07); // hit-stop is a beat, never a stall
+    update(hitstop > 0 ? dt * .1 : dt); hitstop = Math.max(0, hitstop - dt);
+    updateNet(dt); updateScore(dt); updateTravel(dt);
+    render();
+    miniT -= dt; if (miniT <= 0) { drawMini(); miniT = .1; }
+    updateHUD();
+  } catch (e) { if (frameErrors++ < 5) console.error("[gizmo-knight] frame error", e); }
   msAcc += performance.now() - t0; fpsAcc += dt; fpsN++;
   if (fpsAcc > .5) { $("fps").textContent = `FPS ${Math.round(fpsN / fpsAcc)} · frame ${(msAcc / fpsN).toFixed(1)} ms`; fpsAcc = msAcc = 0; fpsN = 0; }
-  requestAnimationFrame(frame);
 }
+// phones drop the WebGL context when backgrounded or under memory pressure; recover instead of freezing
+let glLost = false;
+glc.addEventListener("webglcontextlost", e => { e.preventDefault(); glLost = true; setTimeout(() => location.reload(), 2500); });
+glc.addEventListener("webglcontextrestored", () => location.reload());
 
 async function start() {
   try { await Promise.race([document.fonts.load('600 16px "IBM Plex Mono"'), new Promise(r => setTimeout(r, 1500))]); } catch (e) {}
