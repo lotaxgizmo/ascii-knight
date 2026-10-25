@@ -852,7 +852,7 @@ const xpNeed = () => 60 + player.lv * 40;
 function gainXP(n) {
   player.xp += n;
   while (player.xp >= xpNeed()) {
-    player.xp -= xpNeed(); player.lv++; player.mhp += 12; player.hp = player.mhp; player.mmp += 8; player.mp = player.mmp;
+    player.xp -= xpNeed(); player.lv++; player.hp = player.mhp; player.mmp += 10; player.mp = player.mmp; // max HP never grows: fights stay winnable
     addLog(`Level up! You are now level ${player.lv}.`, "System", "gold");
     for (let k = 0; k < 40; k++) { const a = rnd() * 6.28, s = 6 + rnd() * 10; particles.push({x: player.x, y: player.y, z: 1, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 6 + rnd() * 8, g: -14, life: 1, max: 1, ch: "+", c0: [255, 230, 140], c1: [216, 150, 44]}); }
   }
@@ -2341,7 +2341,8 @@ function spawnPoint() { // somewhere open in the arena, preferring spots far fro
 }
 /* Kills make you stronger for the rest of the round: each one adds damage, max HP and max MP and heals you.
    The bonus is wiped when a new round starts, so every match begins even. */
-const KILL_DMG = .06, KILL_DMG_CAP = .6, KILL_HP = 3, KILL_HP_CAP = 15, KILL_MP = 12, KILL_MP_REFILL = 40, KILL_HEAL = .15;
+// max HP never grows, so a player on a streak can always be brought down; damage and mana are what scale
+const KILL_DMG = .06, KILL_DMG_CAP = .6, KILL_HP = 0, KILL_HP_CAP = 0, KILL_MP = 12, KILL_MP_REFILL = 40, KILL_HEAL = .15;
 function killBonus() {
   const kb = player.kb;
   const hpGain = Math.max(0, Math.min(KILL_HP, KILL_HP_CAP - kb.hp));
@@ -2349,7 +2350,7 @@ function killBonus() {
   player.mhp += hpGain; player.mmp += KILL_MP;
   player.hp = Math.min(player.mhp, player.hp + player.mhp * KILL_HEAL); player.mp = Math.min(player.mmp, player.mp + KILL_MP_REFILL);
   floaters.push({x: player.x, y: player.y - 9, text: `+${Math.round(KILL_DMG * 100)}% DMG  +${KILL_MP} MAX MP`, c: [255, 214, 120], big: 1.1, life: 1.6, max: 1.6, vx: 0});
-  addLog(`Kill bonus: +${Math.round(kb.dmg * 100)}% damage, ${player.mmp} max MP, ${player.mhp} max HP (${kb.kills} kill${kb.kills === 1 ? "" : "s"} this round).`, "General", "gold");
+  addLog(`Kill bonus: +${Math.round(kb.dmg * 100)}% damage, ${player.mmp} max MP (${kb.kills} kill${kb.kills === 1 ? "" : "s"} this round).`, "General", "gold");
 }
 function resetKillBonus() {
   const kb = player.kb;
