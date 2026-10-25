@@ -2472,6 +2472,12 @@ function updateScore(dt) {
   $("modeSel").hidden = !net.host;
   $("modeSel").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === net.mode));
   $("scoreLine").innerHTML = `${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
+  // the collapsed chip: just the mode and the one number that matters
+  let mini;
+  if (net.mode === "tdm") mini = `<b style="color:${TEAM_COL[0]}">RED ${hs.teamScore[0]}</b>–<b style="color:${TEAM_COL[1]}">${hs.teamScore[1]} BLUE</b>`;
+  else if (net.mode === "ffa") mini = `FFA · you ${(hs.score[selfId] || [0])[0]}/${goal}`;
+  else mini = "Practice";
+  $("scoreMini").innerHTML = `${mini} · ${n} online${hs.winner ? " · ★" : ""}`;
   $("scoreSub").textContent = `${n} knight${n === 1 ? "" : "s"} online${role}${hs.winner ? ` · ${hs.winner} wins! next round in ${Math.ceil(Math.max(0, (net.resetAt - performance.now()) / 1000))}s` : ""}`;
   if (!$("board").hidden) renderBoard();
 }
@@ -2537,6 +2543,23 @@ function showLobby() {
   }, {once: true}));
 }
 $("modeSel").addEventListener("click", e => { e.stopPropagation(); const m = e.target.closest("button"); if (m) setRealmMode(m.dataset.m); });
-$("score").addEventListener("click", e => { if (e.target.id === "leaveBtn") { location.reload(); return; } const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
+// collapsible panels: the match panel starts as a small chip; both remember how you left them
+function setPanel(el, btn, open, key, labels) {
+  el.classList.toggle("collapsed", !open); btn.setAttribute("aria-expanded", open); btn.setAttribute("aria-label", labels[open ? 1 : 0]);
+  try { localStorage.setItem(key, open ? "1" : "0"); } catch (e) {}
+}
+const savedOpen = (key, dflt) => { try { const v = localStorage.getItem(key); return v === null ? dflt : v === "1"; } catch (e) { return dflt; } };
+const SCORE_L = ["Show match details", "Hide match details"], MAP_L = ["Show map", "Hide map"];
+setPanel($("score"), $("scoreChip"), savedOpen("gk.scoreOpen", false), "gk.scoreOpen", SCORE_L);
+setPanel($("mapbox"), $("mapToggle"), savedOpen("gk.mapOpen", innerHeight > 500), "gk.mapOpen", MAP_L);
+$("mapToggle").textContent = $("mapbox").classList.contains("collapsed") ? "+" : "–";
+$("scoreChip").addEventListener("click", e => { e.stopPropagation(); setPanel($("score"), $("scoreChip"), $("score").classList.contains("collapsed"), "gk.scoreOpen", SCORE_L); });
+$("mapToggle").addEventListener("click", e => {
+  e.stopPropagation(); const open = $("mapbox").classList.contains("collapsed");
+  setPanel($("mapbox"), $("mapToggle"), open, "gk.mapOpen", MAP_L); $("mapToggle").textContent = open ? "–" : "+";
+  if (open) { const m = $("mini"); m.width = Math.round(m.clientWidth * dpr); m.height = Math.round(m.clientHeight * dpr); } // was 0x0 while hidden
+});
+$("boardBtn").addEventListener("click", e => { e.stopPropagation(); const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
+$("leaveBtn").addEventListener("click", e => { e.stopPropagation(); location.reload(); });
 start();
 if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net}; // dev-server-only handle for testing

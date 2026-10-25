@@ -135,16 +135,28 @@ button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}
 .lb-modes b{font:600 14px var(--mono);color:#ece5cf}
 .lb-modes small{font-size:10.5px;color:var(--dim)}
 .lb-note{margin:0;color:var(--dim);font-size:10.5px;text-align:center}
-#score{left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));padding:5px 64px 5px 12px;text-align:center;pointer-events:auto;cursor:pointer;max-width:calc(100vw - 420px)}
+#score{left:50%;transform:translateX(-50%);top:calc(10px + env(safe-area-inset-top,0px));padding:0;text-align:center;pointer-events:auto;max-width:calc(100vw - 420px)}
 #score[hidden],#board[hidden]{display:none}
+#scoreChip{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;padding:4px 10px;font:600 10.5px var(--mono);color:var(--fg);white-space:nowrap;margin:0 auto}
+#scoreChip:focus-visible{outline:1px solid var(--rune)}
+#scoreChip .caret{color:var(--dim);transition:transform .15s}
+#score:not(.collapsed) #scoreChip .caret{transform:rotate(180deg)}
+#score.collapsed #scoreFull{display:none}
+#scoreFull{padding:0 12px 6px;border-top:1px solid var(--line);display:grid;gap:3px;padding-top:5px}
 #scoreSub{color:var(--dim);font-size:10px}
-#leaveBtn{all:unset;position:absolute;right:6px;top:50%;transform:translateY(-50%);padding:3px 8px;border:1px solid var(--line);font:10px var(--mono);color:var(--dim);cursor:pointer}
+.sc-actions{display:flex;gap:6px;justify-content:center;margin-top:3px}
+.sc-actions button{all:unset;cursor:pointer;padding:2px 9px;border:1px solid var(--line);font:10px var(--mono);color:var(--dim)}
+.sc-actions button:hover,.sc-actions button:focus-visible{color:var(--fg);border-color:var(--rune)}
+#mapToggle{all:unset;cursor:pointer;padding:0 6px;color:var(--dim);font:600 12px/1 var(--mono);border:1px solid transparent}
+#mapToggle:hover,#mapToggle:focus-visible{color:var(--fg);border-color:var(--line)}
+#mapbox.collapsed #mini,#mapbox.collapsed .mc,#mapbox.collapsed #zoom{display:none}
+#mapbox.collapsed .mt{padding-bottom:0}
 #board{left:50%;transform:translateX(-50%);top:calc(64px + env(safe-area-inset-top,0px));min-width:260px;padding:6px 10px;display:grid;gap:2px;z-index:6}
 #board .row{display:grid;grid-template-columns:1fr 48px 52px;gap:8px;font-variant-numeric:tabular-nums}
 #board .head{color:var(--dim);border-bottom:1px solid var(--line);padding-bottom:3px}
 #board .me{color:#ffe2a0}
 @media (max-width:640px){#score{max-width:calc(100vw - 32px);top:auto;bottom:calc(64px + env(safe-area-inset-bottom,0px));font-size:9.5px}}
-@media (max-height:500px){#score{top:calc(6px + env(safe-area-inset-top,0px));bottom:auto;max-width:calc(100vw - 300px);font-size:9px;padding:3px 56px 3px 8px}}
+@media (max-height:500px){#score{top:calc(6px + env(safe-area-inset-top,0px));bottom:auto;max-width:calc(100vw - 300px);font-size:9px}#scoreChip{font-size:9.5px;padding:3px 8px}}
 /* waystone travel */
 #travelBtn{position:fixed;z-index:6;left:50%;transform:translateX(-50%);bottom:calc(118px + env(safe-area-inset-bottom,0px));padding:7px 14px;border:1px solid rgba(181,140,255,.6);background:rgba(20,10,40,.7);color:#e4d6ff;font:600 12px var(--mono);text-shadow:0 0 10px rgba(160,110,255,.9);cursor:pointer}
 #travelBtn[hidden],#travel[hidden]{display:none}
