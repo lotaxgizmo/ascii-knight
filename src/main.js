@@ -704,16 +704,16 @@ let TLx = 0, TLy = 0, OX = 0, OY = 0;
 /* Four classes share the knight's animations but differ in armour colour, aura, base stats and how hard
    their sword and spells hit. Base HP differs per class but never grows during a match. */
 const CLASSES = [
-  {id: "knight", name: "Knight", icon: "⚔", desc: "Wide sweeping swing that reaches further; balanced.",
+  {id: "knight", name: "Knight", icon: "⚔", desc: "Wide sweeping swing. Dash is a Shield Charge that bowls enemies over; blocking refunds mana.",
     hp: 120, mp: 60, speed: 1, melee: 1, spell: 1, regen: 1, dashCd: 1, arc: 1.35, reach: 1.25,
     tint: [.95, 1.02, 1.12], visor: [120, 220, 255], glow: [150, 200, 255], aura: "glint"},
-  {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute: huge melee and health, weak magic.",
+  {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute. Bloodlust: under 40% HP his sword hits harder and heals him.",
     hp: 140, mp: 45, speed: 1.03, melee: 1.3, spell: .75, regen: .85, dashCd: 1, arc: 1, reach: 1,
     tint: [1.3, 1.02, .58], visor: [255, 110, 40], glow: [255, 110, 40], aura: "ember"},
-  {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Arcane: deep mana, devastating spells, fragile in melee.",
+  {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Deep mana, huge spells. Dash is Phase Shift: teleport and leave all your mana behind as an exploding rift.",
     hp: 100, mp: 100, speed: .97, melee: .75, spell: 1.3, regen: 1.35, dashCd: 1.1, arc: 1, reach: 1,
     tint: [.78, .58, 1.45], visor: [210, 140, 255], glow: [170, 90, 255], aura: "arcane"},
-  {id: "shadow", name: "Shadow", icon: "☾", desc: "Smoke and speed: fastest on foot, quick dash, sharp blade.",
+  {id: "shadow", name: "Shadow", icon: "☾", desc: "Fastest on foot, cheap sprint. Backstab: hits from behind or out of smoke always crit.",
     hp: 105, mp: 60, speed: 1.15, melee: 1.1, spell: .9, regen: 1, dashCd: .6, arc: 1, reach: 1,
     tint: [.4, .5, .5], visor: [90, 255, 170], glow: [60, 255, 160], aura: "smoke"},
 ];
@@ -727,13 +727,15 @@ function applyClass(ki) {
   player.hp = player.mhp; player.mp = player.mmp;
   $("status").querySelector(".cls").textContent = c.name;
   KNC = []; KN = knSet(net.color, myClass);
+  refreshKitUI();
   try { localStorage.setItem("gk.class", myClass); } catch (e) {}
 }
 // a class aura: a few particles a second around any knight of that class
-function classAura(x, y, ki, alpha) {
+function classAura(x, y, ki, alpha, hpk = 1) {
   const cls = CLASSES[ki] || CLASSES[0], a = cls.aura;
   octx.globalCompositeOperation = "lighter";
   glow(x, y - 2.5, cls.glow, 9, (.28 + .08 * Math.sin(time * 3 + x)) * alpha);
+  if (ki === 1 && hpk < BLOOD_HP && hpk > 0) glow(x, y - 3, [255, 30, 20], 13, (.45 + .25 * Math.sin(time * 14)) * alpha); // bloodlust
   if (a === "ember") glow(x, y - .3, [255, 80, 20], 7, (.35 + .15 * Math.sin(time * 9 + y)) * alpha); // fire at the feet
   octx.globalCompositeOperation = "source-over";
   if (!a || alpha < .6 || rnd() > (isTouch ? .12 : .35) * QUALITY[quality].fx) return;
@@ -809,10 +811,10 @@ function gatherLights() {
     L.push({x: l.x, y: l.y, r: l.r, i, c: l.c, pri: -d});
   }
   for (const p of projectiles) L.push({x: p.x, y: p.y, r: 15 * (1 + p.pow), i: (1.5 + p.pow) * flick(p.ph, .15), c: [1, .55, .2], pri: 50});
-  if (charge.on && charge.t > .08) L.push({x: player.x, y: player.y, r: 10 + chargePower() * 14, i: .8 + chargePower(), c: CHARGE_COL[charge.kind].map(v => v / 255), pri: 55});
+  if (charge.on && charge.t > .08) L.push({x: player.x, y: player.y, r: 10 + chargePower() * 14, i: .8 + chargePower(), c: colOf(charge.kind).map(v => v / 255), pri: 55});
   for (const s of sparks) L.push({x: s.x, y: s.y, r: 16, i: 1.8, c: [.6, .78, 1], pri: 52});
   for (const b of bolts) if (b.t >= 0) L.push({x: b.x, y: b.y, r: 70, i: 5 * boltBright(b.t), c: [.7, .82, 1], pri: 90});
-  for (const r of residues) { if (r.kind === "crater") continue; const k = r.life / r.max; L.push({x: r.x, y: r.y, r: r.r * 3, i: (r.kind === "fire" ? 1.1 * flick(r.x, .2) : .7 * (.7 + .3 * Math.sin(time * 40))) * k, c: r.kind === "fire" ? [1, .5, .15] : [.5, .7, 1], pri: 45}); }
+  for (const r of residues) { if (r.kind === "crater" || r.kind === "smoke") continue; const k = r.life / r.max; L.push({x: r.x, y: r.y, r: r.r * 3, i: (r.kind === "fire" ? 1.1 * flick(r.x, .2) : .7 * (.7 + .3 * Math.sin(time * 40))) * k, c: r.kind === "fire" ? [1, .5, .15] : [.5, .7, 1], pri: 45}); }
   for (const t of tempLights) L.push({x: t.x, y: t.y, r: t.r, i: t.i * (t.life / t.max), c: t.c, pri: 60});
   for (const w of wisps) { const d = gdist(w.x, w.y, cam.x, cam.y); if (d < 220) L.push({x: w.x, y: w.y, r: 11, i: .7, c: [.55, 1, .7], pri: -d}); }
   L.sort((a, b) => b.pri - a.pri);
@@ -859,11 +861,11 @@ function setLogOpen(open) {
 const hotbar = $("hotbar");
 const SLOTS = [
   {g: "/", name: "Slash", cost: "combo: Sweep, Cleave, Lunge, Whirlwind · hold Space for Ground Slam", act: () => slashDir(player.dx, player.dy)},
-  {g: "*", name: "Fire Orb", cost: "12 MP · hold to charge a Fireball with all your MP", act: () => castDir(player.dx, player.dy)},
-  {g: "ϟ", name: "Lightning", cost: "18 MP · G · hold to charge with all your MP", act: () => castBolt()},
-  {g: "†", name: "Summon Blades", cost: "35 MP · R · hold to charge with all your MP", act: () => castBlades()},
+  {g: "*", name: "Spell 1", cost: "F", act: () => castSlot("s1", 0, player.dx, player.dy)},
+  {g: "ϟ", name: "Spell 2", cost: "G", act: () => castSlot("s2", 0, player.dx, player.dy)},
+  {g: "†", name: "Spell 3", cost: "R", act: () => castSlot("s3", 0, player.dx, player.dy)},
   {g: "◊", name: "Shield", cost: "hold Q", act: () => { setShield(true); setTimeout(() => setShield(false), 900); }},
-  {g: "»", name: "Dodge Roll", cost: "C or Ctrl", act: () => startRoll()},
+  {g: "»", name: "Dash", cost: "C or Ctrl · hold to keep sprinting (drains mana)", act: () => startRoll()},
   {}, {}];
 SLOTS.forEach((s, i) => {
   const b = document.createElement("button"); b.className = "slot" + (s.act ? " ready" : "") + (i === 0 ? " steel" : ""); b.id = "slot" + (i + 1);
@@ -891,11 +893,9 @@ function updateHUD() {
     $("lv").textContent = player.kb.kills ? `LV ${player.lv} · ⚔ ${player.kb.kills} · +${Math.round(player.kb.dmg * 100)}% dmg` : `LV ${player.lv} · ${player.gold}g`;
     $("xpf").style.width = (player.xp / xpNeed() * 100) + "%";
   }
-  slot1cd.style.height = (cd > 0 ? cd / .35 * 100 : 0) + "%";
+  kit().forEach((sp, i) => { slotCds[i + 1].style.height = Math.min(100, spellCd[SLOT_KEYS[i]] / sp.cd * 100) + "%"; });
   slot0cd.style.height = (player.atkCd > 0 ? player.atkCd / .38 * 100 : 0) + "%";
-  slotCds[2].style.height = boltCd / BOLT_CD * 100 + "%";
-  slotCds[3].style.height = bladeCd / BLADE_CD * 100 + "%";
-  slotCds[5].style.height = player.rollCd / (ROLL_CD + ROLL_TIME) * 100 + "%";
+  slotCds[5].style.height = player.rollCd / (myClass === 2 ? PHASE_CD : ROLL_CD + ROLL_TIME) * 100 + "%";
   $("coords").textContent = `X: ${Math.round(player.x - S.x)} Y: ${Math.round((S.y - player.y) * VS)}`;
 }
 const xpNeed = () => 60 + player.lv * 40;
@@ -927,7 +927,7 @@ function drawMini() {
   x.drawImage(miniSrc, sx, sy, sw, sh, 0, 0, w, h);
   const px = (player.x - sx) / sw * w, py = (player.y - sy) / sh * h;
   for (const p of livePeers()) { // other knights: team colour in TDM, their cape colour otherwise; enemies larger
-    if (p.dead) continue;
+    if (p.dead || (p.stealth && isEnemy(p.id))) continue;
     const qx = (p.x - sx) / sw * w, qy = (p.y - sy) / sh * h, z = (isEnemy(p.id) ? 3 : 2) * dpr;
     x.fillStyle = net.mode === "tdm" ? TEAM_COL[teamOf(p.id)] : `rgb(${PALETTE[colorOf(p.id)].map(v => Math.min(255, v + 60)).join(",")})`;
     x.fillRect(qx - z / 2, qy - z / 2, z, z);
@@ -942,7 +942,7 @@ function drawMini() {
 }
 
 /* ============================== input ============================== */
-const CHARGE_KEYS = {KeyF: "fire", KeyK: "fire", Digit2: "fire", KeyG: "bolt", Digit3: "bolt", KeyR: "blades", Digit4: "blades", Space: "slam", KeyJ: "slam", Digit1: "slam"};
+const CHARGE_KEYS = {KeyF: "s1", KeyK: "s1", Digit2: "s1", KeyG: "s2", Digit3: "s2", KeyR: "s3", Digit4: "s3", Space: "slam", KeyJ: "slam", Digit1: "slam"};
 const KEYMAP = {ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d", ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r", ShiftLeft: "run", ShiftRight: "run"};
 addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || !$("lobby").hidden) return; // typing a name, or still in the lobby
@@ -953,11 +953,11 @@ addEventListener("keydown", e => {
   if (KEYMAP[e.code]) { keys[KEYMAP[e.code]] = true; e.preventDefault(); }
   if (e.repeat) return;
   if (e.code === "Space" || e.code === "KeyJ" || e.code === "Digit1") { slashDir(player.dx, player.dy); startCharge("key", "slam"); e.preventDefault(); }
-  if (e.code === "KeyF" || e.code === "KeyK" || e.code === "Digit2") { startCharge("key"); e.preventDefault(); }
-  if (e.code === "KeyG" || e.code === "Digit3") startCharge("key", "bolt");
-  if (e.code === "KeyR" || e.code === "Digit4") startCharge("key", "blades");
+  if (e.code === "KeyF" || e.code === "KeyK" || e.code === "Digit2") { startCharge("key", "s1"); e.preventDefault(); }
+  if (e.code === "KeyG" || e.code === "Digit3") startCharge("key", "s2");
+  if (e.code === "KeyR" || e.code === "Digit4") startCharge("key", "s3");
   if (e.code === "KeyQ" || e.code === "Digit5") setShield(true);
-  if (e.code === "KeyC" || e.code === "Digit6" || e.code === "ControlLeft") { startRoll(); e.preventDefault(); }
+  if (DASH_KEYS.has(e.code)) { dashHeld = true; startRoll(); e.preventDefault(); }
   if (e.code === "Minus" || e.code === "NumpadSubtract") setZoom(zoomI - 1);
   if (e.code === "Equal" || e.code === "NumpadAdd") setZoom(zoomI + 1);
 });
@@ -970,8 +970,9 @@ addEventListener("keyup", e => {
   if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false;
   if (charge.on && charge.src === "key" && CHARGE_KEYS[e.code] === charge.kind) releaseCharge(player.dx, player.dy);
   if (e.code === "KeyQ" || e.code === "Digit5") setShield(false);
+  if (DASH_KEYS.has(e.code)) dashHeld = false;
 });
-addEventListener("blur", () => { for (const k in keys) keys[k] = false; charge.on = false; setShield(false); });
+addEventListener("blur", () => { for (const k in keys) keys[k] = false; charge.on = false; setShield(false); dashHeld = false; });
 const touch = $("touch"), stickEl = $("stick"), knob = $("knob");
 // two fingers on the world = pinch zoom (the move stick is dropped while pinching)
 const pinchPts = new Map();
@@ -1048,7 +1049,9 @@ if (isTouch) {
   castBtn.addEventListener("pointerup", e => { e.preventDefault(); if (charge.src === "btn") releaseCharge(player.dx, player.dy); });
   castBtn.addEventListener("pointercancel", () => { if (charge.src === "btn") charge.on = false; });
   const tap = (id, fn) => { const b = $(id); b.hidden = false; b.addEventListener("pointerdown", e => { e.preventDefault(); e.stopPropagation(); fn(); }); return b; };
-  holdBtn($("boltBtn"), "bolt"); holdBtn($("bladeBtn"), "blades"); tap("rollBtn", startRoll);
+  holdBtn($("boltBtn"), "s2"); holdBtn($("bladeBtn"), "s3");
+  const rb = tap("rollBtn", () => { dashHeld = true; startRoll(); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) rb.addEventListener(ev, () => { dashHeld = false; });
   const sb = tap("shieldBtn", () => setShield(true));
   for (const ev of ["pointerup", "pointercancel", "pointerleave"]) sb.addEventListener(ev, () => setShield(false));
 }
@@ -1143,14 +1146,13 @@ const MELEE = [
    release. Fire: orb -> fireball. Bolt: more damage, more chains, extra strikes. Blades: more, bigger swords.
    Slam (hold the slash key): free, scales with hold time, a leaping ground slam. */
 const ORB_COST = 12, CHARGE_MIN = .25, FIRE_DMG_PER_MP = 4.5;
-const CHARGE_FULL = {fire: 1.6, bolt: 1.4, blades: 1.6, slam: 1};
-const CHARGE_COL = {fire: [255, 130, 40], bolt: [120, 180, 255], blades: [190, 215, 255], slam: [230, 200, 150]};
-const charge = {on: false, t: 0, src: "", kind: "fire"};
+const charge = {on: false, t: 0, src: "", kind: "s1"};
 function noMana() { if (time - lastNoMana > 1.5) { addLog("Not enough mana.", "System", "warn"); lastNoMana = time; } }
-const baseCost = kind => ({fire: ORB_COST, bolt: BOLT_COST, blades: BLADE_COST, slam: 0})[kind];
-function startCharge(src, kind = "fire") {
+// a slot's base cost; the legacy names are what the shared fire/lightning/blade casts charge themselves
+const baseCost = kind => kind === "slam" ? 0 : spellOf(kind) ? spellOf(kind).cost : ({fire: ORB_COST, bolt: BOLT_COST, blades: BLADE_COST})[kind] || 0;
+function startCharge(src, kind = "s1") {
   if (charge.on || player.roll || player.slam || player.dead) return;
-  const ready = {fire: cd <= 0, bolt: boltCd <= 0, blades: bladeCd <= 0, slam: slamCd <= 0}[kind];
+  const ready = kind === "slam" ? slamCd <= 0 : slotReady(kind);
   if (!ready) return;
   if (player.mp < baseCost(kind)) { noMana(); return; }
   charge.on = true; charge.t = 0; charge.src = src; charge.kind = kind;
@@ -1159,6 +1161,7 @@ function startCharge(src, kind = "fire") {
 function seekTarget(x, y, dx, dy, maxAng, range) {
   let best = null, bs = Infinity;
   for (const d of targets()) {
+    if (d.stealth) continue; // homing can't find a knight hidden in smoke
     const vx = d.x - x, vy = (d.y - y) * VS, l = Math.hypot(vx, vy);
     if (l > range || l < .5) continue;
     const ang = Math.acos(clamp((vx * dx + vy * dy) / l, -1, 1));
@@ -1167,16 +1170,14 @@ function seekTarget(x, y, dx, dy, maxAng, range) {
   return best;
 }
 const HOMING_TURN = 1.5; // rad/s a fireball can bend toward its target: enough to correct, not enough to catch a dodger
-function chargePower() { return clamp((charge.t - CHARGE_MIN) / CHARGE_FULL[charge.kind], 0, 1); }
+function chargePower() { const sp = spellOf(charge.kind); return clamp((charge.t - CHARGE_MIN) / (sp ? sp.full : 1), 0, 1); }
 const fireRadius = pow => 2.6 + pow * 5; // a charged fireball is physically bigger, so it's much harder to miss with
 const chargeCost = (pow, kind = "fire") => { const b = baseCost(kind); return b ? Math.round(b + Math.max(0, player.mp - b) * pow) : 0; };
 function releaseCharge(dx, dy) {
   if (!charge.on) return;
   const pow = chargePower(), held = charge.t; charge.on = false;
-  if (charge.kind === "fire") castDir(dx, dy, pow);
-  else if (charge.kind === "bolt") castBolt(pow);
-  else if (charge.kind === "blades") castBlades(pow);
-  else if (held >= CHARGE_MIN) doSlam(pow); // a tap of the slash key already swung the sword
+  if (charge.kind === "slam") { if (held >= CHARGE_MIN) doSlam(pow); } // a tap of the slash key already swung the sword
+  else castSlot(charge.kind, pow, dx, dy);
 }
 function castDir(dx, dy, pow = 0) {
   const l = Math.hypot(dx, dy); if (l < .001) return;
@@ -1235,17 +1236,23 @@ function initDummies() {
   }
 }
 function hitDummies(x, y, r, fn) { for (const d of targets()) { const dist = gdist(d.x, d.y, x, y); if (dist < r) fn(d, dist); } }
-const DMG_COL = {phys: [236, 240, 248], blade: [190, 220, 255], fire: [255, 150, 60], burn: [255, 196, 96], shock: [150, 212, 255]};
-function damage(d, amt, kind) {
+const DMG_COL = {holy: [255, 226, 140], arcane: [210, 160, 255], poison: [150, 255, 140], phys: [236, 240, 248], blade: [190, 220, 255], fire: [255, 150, 60], burn: [255, 196, 96], shock: [150, 212, 255]};
+function damage(d, amt, kind, shove) {
   if (d.dead) return;
   amt *= (1 + player.kb.dmg) * (kind === "phys" ? C().melee : C().spell); // kill bonus x class strength
-  const crit = kind !== "burn" && rnd() < .15;
+  const blood = kind === "phys" && myClass === 1 && player.hp < player.mhp * BLOOD_HP;
+  if (blood) amt *= 1.4;
+  // Shadow: a blade from behind (they face away) or from inside smoke always crits
+  const backstab = kind === "phys" && myClass === 3 && (player.stealth || (d.buf && d.face && Math.sign(player.x - d.x) === -Math.sign(d.face)));
+  const crit = backstab || (kind !== "burn" && rnd() < .15);
   amt = Math.max(1, Math.round(amt * (crit ? 1.7 : 1) * (.9 + rnd() * .2)));
+  if (backstab) floaters.push({x: d.x, y: d.y - 11, text: "BACKSTAB", c: [120, 255, 190], big: 1, life: .9, max: .9, vx: 0});
+  if (blood && d.buf) { const h = Math.round(amt * .2); player.hp = Math.min(player.mhp, player.hp + h); floaters.push({x: player.x, y: player.y - 9, text: "+" + h, c: [120, 255, 120], big: .9, life: .9, max: .9, vx: 0}); }
   if (d.buf) { // another player's knight: show the number, tell them; they apply it (and may dodge or block)
     if (!isEnemy(d.id) || d.prot) return;
     floaters.push({x: d.x + (rnd() - .5) * 3, y: d.y - 7, text: crit ? amt + "!" : "" + amt, c: DMG_COL[kind], big: (crit ? 1.4 : 1) * (1 + Math.min(1.2, amt / 160)), life: 1.2, max: 1.2, vx: (rnd() - .5) * 5});
     if (kind !== "burn") { hitstop = Math.max(hitstop, crit ? .09 : .05); sfx.hit(crit ? 1 : .4); }
-    net.api.send("hit", {dmg: amt, kind, x: player.x, y: player.y}, d.id);
+    net.api.send("hit", shove ? {dmg: amt, kind, x: player.x, y: player.y, kx: shove[0], ky: shove[1]} : {dmg: amt, kind, x: player.x, y: player.y}, d.id);
     return;
   }
   if (net.api && !net.host) net.api.send("dh", {i: dummies.indexOf(d), dmg: amt, kind}); // the host owns the dummies
@@ -1376,9 +1383,9 @@ function strikeBolt(b, pulse) {
 
 // Residue: what a spell leaves on the ground for a few seconds. Fire leaves a scorch with flames that keep
 // burning (and hurting); lightning leaves a blackened crater with glowing cracks that still spit sparks.
-function addResidue(kind, x, y, r, own = true) {
+function addResidue(kind, x, y, r, own = true, lifeOverride = 0) {
   const cracks = [], flames = [];
-  if (kind !== "fire") for (let k = 0, n = 6 + (rnd() * 3 | 0); k < n; k++) {
+  if (kind === "shock" || kind === "crater") for (let k = 0, n = 6 + (rnd() * 3 | 0); k < n; k++) {
     const a = k / n * 6.283 + rnd() * .5, L = r * (.7 + rnd() * .8), pts = [[x, y]];
     jag(x, y, x + Math.cos(a) * L, y + Math.sin(a) * L / VS, .5, pts); cracks.push(pts);
   }
@@ -1386,7 +1393,7 @@ function addResidue(kind, x, y, r, own = true) {
     const a = rnd() * 6.283, dd = Math.sqrt(rnd()) * r * .8;
     flames.push({x: x + Math.cos(a) * dd, y: y + Math.sin(a) * dd / VS, ph: rnd() * 6, s: .6 + rnd() * .7});
   }
-  const life = kind === "fire" ? 4.5 : kind === "crater" ? 3.8 : 3.2;
+  const life = lifeOverride || (kind === "fire" ? 4.5 : kind === "crater" ? 3.8 : 3.2);
   residues.push({kind, x, y, r, life, max: life, cracks, flames, tick: .3, arcT: .1, arc: null, own});
   if (residues.length > 24) residues.shift();
 }
@@ -1427,6 +1434,9 @@ function updateCombat(dt) {
     if (r.kind === "fire") {
       r.tick -= dt;
       if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, 3, "burn")); }
+    } else if (r.kind === "smoke") { // poison everyone else inside
+      r.tick -= dt;
+      if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, 5, "poison")); }
       for (const f of r.flames) {
         if (rnd() < dt * 5 * k) particles.push({x: f.x, y: f.y, z: 1, vx: (rnd() - .5) * 2, vy: 0, vz: 3 + rnd() * 3, g: 0, life: .5, max: .5, ch: "'", c0: [255, 200, 100], c1: [160, 40, 10]});
         if (rnd() < dt * 1.5) particles.push({x: f.x, y: f.y, z: 2, vx: (rnd() - .5) * 2, vy: 0, vz: 2 + rnd() * 2, g: 0, life: 1.4, max: 1.4, ch: "~", c0: [110, 104, 100], c1: [26, 26, 30]});
@@ -1463,7 +1473,7 @@ function drawResidueGround() { // scorch marks, under everything else
   for (const r of residues) {
     const k = Math.min(1, r.life / r.max * 2.2), X = sx(r.x), Y = sy(r.y), rx = r.r * CW * 1.15, ry = r.r / VS * CH * 1.15;
     const g = octx.createRadialGradient(X, Y, 0, X, Y, rx);
-    const [c0, c1] = {fire: ["rgba(14,8,4,.78)", "rgba(30,14,6,.45)"], shock: ["rgba(4,6,14,.85)", "rgba(10,14,30,.4)"], crater: ["rgba(20,14,8,.7)", "rgba(40,30,18,.35)"]}[r.kind];
+    const [c0, c1] = {fire: ["rgba(14,8,4,.78)", "rgba(30,14,6,.45)"], shock: ["rgba(4,6,14,.85)", "rgba(10,14,30,.4)"], crater: ["rgba(20,14,8,.7)", "rgba(40,30,18,.35)"], smoke: ["rgba(14,20,18,.45)", "rgba(20,28,26,.25)"]}[r.kind];
     g.addColorStop(0, c0); g.addColorStop(.6, c1); g.addColorStop(1, "rgba(0,0,0,0)");
     octx.save(); octx.globalAlpha = k; octx.translate(X, Y); octx.scale(1, ry / rx); octx.translate(-X, -Y);
     octx.fillStyle = g; octx.beginPath(); octx.arc(X, Y, rx, 0, 6.283); octx.fill(); octx.restore();
@@ -1530,7 +1540,9 @@ function drawFloaters() {
 // Dodge roll: a quick burst along your input (or facing), steering locked, ghost trail, then a get-up beat.
 const ROLL_TIME = .26, ROLL_GETUP = .12, ROLL_DIST = 30, ROLL_CD = .6; // a real burst: ~115 cells/s on average
 function startRoll() {
-  if (player.roll || player.rollCd > 0 || player.dead) return;
+  if (myClass === 2) { phaseShift(); return; }
+  if (player.roll || player.surge || player.rollCd > 0 || player.dead) return;
+  dashHits.clear();
   let ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0) + stick.x, iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0) + stick.y;
   if (mouseWalk.on) { const d = aimAt(mouseWalk.cx, mouseWalk.cy); ix += d[0]; iy += d[1]; }
   let l = Math.hypot(ix, iy); if (l < .1) { ix = player.dx; iy = player.dy; l = Math.hypot(ix, iy) || 1; }
@@ -1668,7 +1680,7 @@ function drawBlades(behind) {
   octx.globalAlpha = 1;
 }
 function drawCharge() { // what's gathering in his hand (or at his feet for the slam), plus the price
-  const pw = chargePower(), k = charge.kind, c = CHARGE_COL[k], slam = k === "slam";
+  const pw = chargePower(), sp = spellOf(charge.kind), k = sp ? sp.id : "slam", c = colOf(charge.kind), slam = k === "slam";
   const hx = player.x + (slam ? 0 : player.face * 1.2), hy = player.y - (slam ? 0 : 3.2);
   glow(hx, hy, c, (slam ? 8 : 4) + pw * 14, .5 + pw * .5);
   if (k === "fire") glyph(pw > .5 ? "@" : pw > 0 ? "o" : "*", hx, hy, 255, 235, 190, .9);
@@ -1690,7 +1702,8 @@ function drawCharge() { // what's gathering in his hand (or at his feet for the 
     octx.globalCompositeOperation = "source-over"; octx.globalAlpha = .9;
     octx.font = `700 ${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`;
     octx.fillStyle = pw >= 1 ? "#ffe9b8" : `rgb(${c.join(",")})`;
-    const label = slam ? `SLAM ${Math.round(pw * 100)}%` : `${chargeCost(pw, k)} MP${k === "blades" ? ` · ${BLADE_N + Math.round(pw * 5)} blades` : ""}`;
+    const extra = k === "blades" ? ` · ${BLADE_N + Math.round(pw * 5)} blades` : k === "missiles" || k === "daggers" ? ` · ${3 + Math.round(pw * 4)}` : "";
+    const label = slam ? `SLAM ${Math.round(pw * 100)}%` : `${chargeCost(pw, charge.kind)} MP${extra}`;
     octx.fillText(label + (pw >= 1 ? " MAX" : ""), sx(hx), sy(player.y - 9));
     octx.font = FONT; octx.globalCompositeOperation = "lighter";
   }
@@ -1720,10 +1733,16 @@ function updateSlam(dt) {
   slamCd = Math.max(0, slamCd - dt);
   const s = player.slam; if (!s) return;
   s.t += dt;
-  if (s.t < SLAM_AIR) { // leap forward a little
+  if (s.t < SLAM_AIR && s.leap) { // Inferno Leap: an arc onto the chosen landing spot
+    const k = s.t / SLAM_AIR; player.x = s.leap.x0 + (s.leap.x1 - s.leap.x0) * k; player.y = s.leap.y0 + (s.leap.y1 - s.leap.y0) * k;
+    if (rnd() < .8) particles.push({x: player.x, y: player.y, z: 3, vx: 0, vy: 0, vz: 1, g: 0, life: .35, max: .35, ch: "^", c0: [255, 200, 100], c1: [200, 40, 10]});
+  } else if (s.t < SLAM_AIR) { // leap forward a little
     const sp = (5 + s.pow * 5) / SLAM_AIR, tx = player.x + s.dx * sp * dt, ty = player.y + s.dy * sp * dt / VS;
     if (!blockedAt(tx, player.y)) player.x = tx;
     if (!blockedAt(player.x, ty)) player.y = ty;
+  } else if (!s.hit && s.leap) {
+    s.hit = true; player.x = s.leap.x1; player.y = s.leap.y1;
+    explode(player.x, player.y, s.pow, s.dmg, true); netFx({k: "boom", x: player.x, y: player.y, pow: s.pow, dmg: s.dmg});
   } else if (!s.hit) {
     s.hit = true;
     const R = 7 + s.pow * 6, dmg = 100 + s.pow * 160;
@@ -1802,20 +1821,47 @@ function update(dt) {
     player.ghostT -= dt; if (player.ghostT <= 0 && k < .8) { ghosts.push({x: player.x, y: player.y, ...knightPose(), life: .28}); player.ghostT = .02; }
     if (k < .7) for (let s = 0; s < 2; s++) particles.push({x: player.x - r.dx * 2, y: player.y - r.dy * 2 / VS, z: 2 + rnd() * 3, vx: -r.dx * 30, vy: -r.dy * 30 / VS, vz: 0, g: 0, life: .15, max: .15, ch: Math.abs(r.dx) > Math.abs(r.dy) ? "-" : "|", c0: [230, 240, 255], c1: [90, 130, 200]}); // speed streaks
     if (rnd() < dt * 30 && k < .8) particles.push({x: player.x + (rnd() - .5) * 2, y: player.y, z: .2, vx: -r.dx * 6 + (rnd() - .5) * 4, vy: (rnd() - .5) * 2, vz: 1 + rnd() * 2, g: -6, life: .5, max: .5, ch: [".", ",", "`"][rnd() * 3 | 0], c0: [150, 142, 120], c1: [40, 38, 34]});
-    if (r.t >= ROLL_TIME + ROLL_GETUP) player.roll = null;
-    len = 0;
+    if (r.t >= ROLL_TIME && dashHeld && player.mp > 4 && !player.dead) { player.roll = null; player.surge = {dx: r.dx, dy: r.dy}; } // still holding: keep going
+    else { if (r.t >= ROLL_TIME + ROLL_GETUP) player.roll = null; len = 0; }
+  }
+  if (player.surge) { // sprinting dash: steerable, fast, burns mana every moment it lasts
+    const s = player.surge, cost = SURGE_MP * (myClass === 3 ? .5 : 1) * dt;
+    if (!dashHeld || player.dead || player.slam || player.mp < cost) { player.surge = null; player.rollCd = ROLL_CD * C().dashCd; }
+    else {
+      player.mp -= cost;
+      if (len > .12) { const t = Math.min(1, dt * 7); s.dx += (ix / len - s.dx) * t; s.dy += (iy / len - s.dy) * t; const l = Math.hypot(s.dx, s.dy) || 1; s.dx /= l; s.dy /= l; }
+      ix = s.dx; iy = s.dy; len = 1;
+      if (rnd() < .7) particles.push({x: player.x - s.dx * 2, y: player.y - s.dy * 2 / VS, z: 1.5 + rnd() * 3, vx: -s.dx * 26, vy: -s.dy * 26 / VS, vz: 0, g: 0, life: .16, max: .16, ch: Math.abs(s.dx) > Math.abs(s.dy) ? "-" : "|", c0: CLASSES[myClass].glow, c1: [40, 50, 80]});
+    }
+  }
+  if (player.knock) { // shoved by a Shield Charge
+    const kn = player.knock, f = Math.max(0, kn.t / KNOCK_T); kn.t -= dt;
+    for (let s = 0; s < 3; s++) {
+      const tx = player.x + kn.vx * f * dt / 3, ty = player.y + kn.vy * f * dt / 3 / VS;
+      if (!blockedAt(tx, player.y)) player.x = tx;
+      if (!blockedAt(player.x, ty)) player.y = ty;
+    }
+    if (kn.t <= 0) player.knock = null;
+  }
+  shieldCharge();
+  if (myClass === 1) { // Berserker: entering bloodlust is announced
+    const bl = !player.dead && player.hp < player.mhp * BLOOD_HP;
+    if (bl && !player.blood) { floaters.push({x: player.x, y: player.y - 10, text: "BLOODLUST", c: [255, 70, 50], big: 1.3, life: 1.4, max: 1.4, vx: 0}); sfx.slam(.2); }
+    player.blood = bl;
   }
   updateSlam(dt);
   if (player.slam || (charge.on && charge.kind === "slam" && charge.t > CHARGE_MIN)) len = 0; // rooted while slamming / winding up
   player.moving = len > .12;
   if (player.moving) {
-    const sp = (keys.run || Math.hypot(stick.x, stick.y) > .95 ? 56 : 42) * len * (1 - player.shieldUp * .55) * C().speed; // shield up = slow guarded walk
+    const sp = player.surge ? SURGE_SPEED * C().speed : (keys.run || Math.hypot(stick.x, stick.y) > .95 ? 56 : 42) * len * (1 - player.shieldUp * .55) * C().speed; // shield up = slow guarded walk
     const nx = ix / len, ny = iy / len;
     player.dx = nx; player.dy = ny;
     if (Math.abs(nx) > .15) player.face = nx > 0 ? 1 : -1;
-    const tx = player.x + nx * sp * dt, ty = player.y + ny * sp * dt / VS;
-    if (!blockedAt(tx, player.y)) player.x = tx;
-    if (!blockedAt(player.x, ty)) player.y = ty;
+    for (let s = 0, n = Math.max(1, Math.ceil(sp * dt / .6)); s < n; s++) {
+      const tx = player.x + nx * sp * dt / n, ty = player.y + ny * sp * dt / n / VS;
+      if (!blockedAt(tx, player.y)) player.x = tx;
+      if (!blockedAt(player.x, ty)) player.y = ty;
+    }
     player.anim += dt * (4.5 + sp * .09); // run-cycle frames/s: ~1.4 strides/s jogging, ~1.6 running (MMO-like pace)
     player.running = sp > 48;
     const fr = Math.floor(player.anim) % 6;
@@ -1828,7 +1874,7 @@ function update(dt) {
   player.atk = Math.max(0, player.atk - dt); player.atkCd = Math.max(0, player.atkCd - dt); player.recoil = Math.max(0, player.recoil - dt);
   for (let i = ghosts.length - 1; i >= 0; i--) { ghosts[i].life -= dt; if (ghosts[i].life <= 0) ghosts.splice(i, 1); }
   // mana flows back faster while you keep moving: +4/s walking, +7/s running, on top of the base +5/s
-  player.mp = Math.min(player.mmp, player.mp + dt * (5 + (player.moving ? (player.running ? 7 : 4) : 0)) * C().regen);
+  if (!player.surge) player.mp = Math.min(player.mmp, player.mp + dt * (5 + (player.moving ? (player.running ? 7 : 4) : 0)) * C().regen);
   cd = Math.max(0, cd - dt);
 
   // camera
@@ -1840,17 +1886,35 @@ function update(dt) {
 
   // projectiles
   for (let i = projectiles.length - 1; i >= 0; i--) {
-    const p = projectiles[i];
-    { // gentle guidance: turn a little toward a target ahead of the missile
-      const gvx = p.vx, gvy = p.vy * VS, sp = Math.hypot(gvx, gvy), t = seekTarget(p.x, p.y, gvx / sp, gvy / sp, .9, 45);
+    const p = projectiles[i], kind = p.kind || "fire";
+    if (kind === "fire" || kind === "missile") { // guidance: fireballs bend gently, arcane missiles hard
+      const gvx = p.vx, gvy = p.vy * VS, sp = Math.hypot(gvx, gvy), t = seekTarget(p.x, p.y, gvx / sp, gvy / sp, kind === "missile" ? 1.5 : .9, 45);
       if (t) {
-        const cur = Math.atan2(gvy, gvx), want = Math.atan2((t.y - p.y) * VS, t.x - p.x);
+        const cur = Math.atan2(gvy, gvx), want = Math.atan2((t.y - p.y) * VS, t.x - p.x), turn = p.turn || HOMING_TURN;
         let da = want - cur; da = Math.atan2(Math.sin(da), Math.cos(da));
-        const na = cur + clamp(da, -HOMING_TURN * dt, HOMING_TURN * dt);
+        const na = cur + clamp(da, -turn * dt, turn * dt);
         p.vx = Math.cos(na) * sp; p.vy = Math.sin(na) * sp / VS;
       }
     }
     p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+    const wall = BLK[Math.floor(p.y) * W + Math.floor(p.x)] && matAt(p.x, p.y) !== 1;
+    if (kind === "wave") { // passes through everything, hitting each target once
+      if (rnd() < .8) particles.push({x: p.x + (rnd() - .5) * p.r, y: p.y + (rnd() - .5) * p.r / VS, z: p.z, vx: -p.vx * .05, vy: -p.vy * .05, vz: 0, g: 0, life: .2, max: .2, ch: "'", c0: [240, 248, 255], c1: [120, 170, 255]});
+      if (p.own) for (const d of targets()) if (!p.hits.has(d) && gdist(d.x, d.y, p.x, p.y) < p.r) { p.hits.add(d); damage(d, p.dmg, "holy"); }
+      if (wall || p.life <= 0) { for (let k = 0; k < 10; k++) particles.push({x: p.x, y: p.y, z: 3, vx: (rnd() - .5) * 20, vy: (rnd() - .5) * 8, vz: rnd() * 6, g: -10, life: .3, max: .3, ch: "+", c0: [255, 255, 240], c1: [120, 170, 255]}); projectiles.splice(i, 1); }
+      continue;
+    }
+    if (kind === "dagger" || kind === "missile") { // single-target: stop at the first body or wall
+      const mis = kind === "missile";
+      if (rnd() < .7) particles.push({x: p.x, y: p.y, z: p.z, vx: 0, vy: 0, vz: 0, g: 0, life: .18, max: .18, ch: mis ? "·" : "'", c0: mis ? [230, 200, 255] : [220, 255, 235], c1: mis ? [110, 50, 220] : [60, 140, 100]});
+      const body = bodiesFor(p.owner).find(d => gdist(d.x, d.y, p.x, p.y) < (mis ? 2.4 : 2));
+      if (body || wall || p.life <= 0) {
+        if (body && p.own) damage(body, p.dmg, mis ? "arcane" : "phys");
+        if (body || wall) { for (let k = 0; k < (mis ? 12 : 6); k++) particles.push({x: p.x, y: p.y, z: 3, vx: (rnd() - .5) * 16, vy: (rnd() - .5) * 7, vz: rnd() * 5, g: -8, life: .3, max: .3, ch: mis ? "*" : "+", c0: mis ? [240, 210, 255] : [230, 255, 240], c1: mis ? [120, 50, 230] : [70, 160, 110]}); if (mis) tempLights.push({x: p.x, y: p.y, r: 10, i: 1.2, c: [.75, .5, 1], life: .2, max: .2}); }
+        projectiles.splice(i, 1);
+      }
+      continue;
+    }
     for (let n = 0; n < 3 + p.pow * 5; n++) particles.push({x: p.x + (rnd() - .5) * (.8 + p.pow * 2), y: p.y, z: p.z + (rnd() - .5) * .8, vx: -p.vx * .08 + (rnd() - .5) * 3, vy: -p.vy * .08, vz: rnd() * 2, g: 0, life: .25 + rnd() * .25, max: .5, ch: rnd() < .5 ? "*" : ".", c0: [255, 200, 110], c1: [200, 40, 10]});
     const hit = BLK[Math.floor(p.y) * W + Math.floor(p.x)] && matAt(p.x, p.y) !== 1 || bodiesFor(p.owner).some(d => gdist(d.x, d.y, p.x, p.y) < fireRadius(p.pow));
     if (hit || p.life <= 0) { explode(p.x, p.y, p.pow, p.dmg, p.own); projectiles.splice(i, 1); }
@@ -1861,7 +1925,7 @@ function update(dt) {
     const pw = chargePower(), slam = charge.kind === "slam", hx = player.x + (slam ? 0 : player.face * 1.2), hy = player.y;
     if (charge.t > CHARGE_MIN) { // the ground trembles as the power swells; particles are drawn in toward it
       shake = Math.max(shake, .04 + pw * .14);
-      const c = CHARGE_COL[charge.kind], hot = c.map(v => Math.min(255, v + 60)), chs = {fire: "*+", bolt: "-/\\", blades: "|'", slam: ".,`"}[charge.kind];
+      const c = colOf(charge.kind), hot = c.map(v => Math.min(255, v + 60)), chs = (spellOf(charge.kind) || {chs: ".,`"}).chs;
       for (let n = 0; n < 1 + pw * 3; n++) {
         const a = rnd() * 6.283, r = (slam ? 5 : 3) + rnd() * 3;
         particles.push({x: hx + Math.cos(a) * r, y: hy + Math.sin(a) * r / VS, z: slam ? .3 : 3 + rnd() * 2, vx: -Math.cos(a) * r * 4, vy: -Math.sin(a) * r * 4 / VS, vz: slam ? 1 : -1, g: 0, life: .22, max: .22, ch: chs[rnd() * chs.length | 0], c0: hot, c1: c});
@@ -1869,7 +1933,7 @@ function update(dt) {
     }
   }
   for (let i = tempLights.length - 1; i >= 0; i--) { tempLights[i].life -= dt; if (tempLights[i].life <= 0) tempLights.splice(i, 1); }
-  updateCombat(dt);
+  updateCombat(dt); updateDelayed(dt);
 
   // campfire flames
   if (gdist(cam.x, cam.y, S.x, S.y) < 250) {
@@ -2038,10 +2102,10 @@ function drawKnight() {
   octx.globalCompositeOperation = "lighter";
   for (const g of ghosts) { octx.globalAlpha = g.life / .22 * .28; if (KN[g.fr]) drawSprite(KN[g.fr], g.flip, g.x, g.y, 0, 1, 1, CH * .3); }
   octx.globalCompositeOperation = "source-over";
-  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, isProtected(), myClass);
+  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : player.stealth ? .45 : 1, isProtected(), myClass, player.hp / player.mhp);
 }
 // any knight, local or remote: shadow, team ring, sprite, visor glow, name tag
-function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot, ki = 0) {
+function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot, ki = 0, hpk = 1) {
   const set = knSet(ci, ki), k = set[p.fr], cls = CLASSES[ki] || CLASSES[0];
   if (!k) return;
   const occ = occluded(x, y), lift = p.lift * CH;
@@ -2056,7 +2120,7 @@ function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot, ki = 0) {
   drawSprite(k, p.flip, x, y, p.tilt, p.sX, p.sY, lift, p.ss === null ? null : {s: p.ss, side: p.side});
   octx.globalCompositeOperation = "lighter";
   glow(x + (face > 0 ? .8 : -.8), y - (k.h + lift) / CH * .82, cls.visor, 3.4, (.45 + .15 * Math.sin(time * 3)) * alpha);
-  classAura(x, y, ki, alpha);
+  classAura(x, y, ki, alpha, hpk);
   octx.globalCompositeOperation = "source-over";
   octx.font = `600 ${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`;
   octx.globalAlpha = .85 * alpha; octx.fillStyle = net.mode === "tdm" ? TEAM_COL[team] : `rgb(${PALETTE[ci].map(v => Math.min(255, v + 70)).join(",")})`;
@@ -2107,16 +2171,30 @@ function render() {
   octx.globalCompositeOperation = "source-over";
   // dummies and knights, back to front
   const ents = dummies.map(d => ({y: d.y, f: () => drawDummy(d)}));
-  for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { drawKnightAt(p.x, p.y, p.p, colorOf(p.id), p.name, teamOf(p.id), p.face, p.dead ? .5 : 1, p.prot, p.cls || 0); drawRemoteExtras(p); }});
+  for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { const hid = p.stealth && isEnemy(p.id); drawKnightAt(p.x, p.y, p.p, colorOf(p.id), hid ? "" : p.name, teamOf(p.id), p.face, p.dead ? .5 : hid ? .1 : p.stealth ? .5 : 1, p.prot, p.cls || 0, p.hp / (p.mhp || 1)); if (!hid) drawRemoteExtras(p); }});
   ents.push({y: player.y, f: drawKnight});
   ents.sort((a, b) => a.y - b.y);
   drawBlades(true);
   for (const e of ents) e.f();
   drawBlades(false);
+  drawSmoke();
   octx.globalCompositeOperation = "lighter";
   drawShieldWard();
   drawResidueGlow();
+  drawDelayed();
   for (const p of projectiles) {
+    const kind = p.kind || "fire", a = Math.atan2(p.vy * VS, p.vx);
+    if (kind === "wave") { // a crescent of light, bowed forward
+      glow(p.x, p.y - p.z, [170, 210, 255], p.r * 2.4, .6);
+      const pa = ((a + Math.PI / 2) % Math.PI + Math.PI) % Math.PI, ch = pa < .39 || pa > 2.75 ? "-" : pa < 1.18 ? "\\" : pa < 1.96 ? "|" : "/";
+      for (let k = -4; k <= 4; k++) { const o = k / 4 * p.r, bow = (1 - (k / 4) ** 2) * 1.6; glyph(ch, p.x + Math.cos(a) * bow - Math.sin(a) * o, p.y - p.z + (Math.sin(a) * bow + Math.cos(a) * o) / VS, 240, 248, 255, .95); }
+      continue;
+    }
+    if (kind === "missile") { glow(p.x, p.y - p.z, [180, 110, 255], 5, .9); glyph("o", p.x, p.y - p.z, 245, 225, 255, 1); continue; }
+    if (kind === "dagger") {
+      const da = ((a % Math.PI) + Math.PI) % Math.PI, ch = da < .39 || da > 2.75 ? "-" : da < 1.18 ? "\\" : da < 1.96 ? "|" : "/";
+      glow(p.x, p.y - p.z, [120, 255, 190], 3, .5); glyph(ch, p.x, p.y - p.z, 230, 255, 240, 1); continue;
+    }
     const R = fireRadius(p.pow);
     glow(p.x, p.y - p.z, [255, 140, 40], 9 + R * 3.4 * p.pow, .9); glow(p.x, p.y - p.z, [255, 230, 160], 3.5 * (1 + p.pow * 2), 1);
     glyph("@", p.x, p.y - p.z, 255, 250, 225, 1);
@@ -2148,6 +2226,321 @@ function render() {
     octx.font = FONT;
   }
   octx.globalAlpha = 1;
+}
+
+
+/* ============================== class spell kits ============================== */
+/* Each class has its own three spells on F / G / R (phone: the three spell buttons). Sword, shield, dash and
+   the hold-Space ground slam are shared. Every spell charges: hold to pour in mana for more damage, size,
+   count or distance. Spells live in "slots" s1/s2/s3 so keys, buttons, cooldowns and charging stay generic. */
+const SLOT_KEYS = ["s1", "s2", "s3"];
+const spellCd = {s1: 0, s2: 0, s3: 0};
+const KITS = [
+  [ // Knight: holy steel
+    {id: "wave", name: "Crescent Wave", icon: ")", cost: 14, cd: .55, full: 1.2, col: [200, 225, 255], chs: ")(", desc: "a wide blade wave that passes through everything in its path", cast: castWave},
+    {id: "judgment", name: "Judgment", icon: "‡", cost: 20, cd: 1.2, full: 1.3, col: [255, 215, 110], chs: "+'", desc: "a pillar of golden light slams down on the aim point", cast: castJudgment},
+    {id: "blades", name: "Summon Blades", icon: "†", cost: BLADE_COST, cd: BLADE_CD, full: 1.6, col: [190, 215, 255], chs: "|'", desc: "giant homing swords", cast: pow => castBlades(pow)},
+  ],
+  [ // Berserker: fire
+    {id: "fire", name: "Fireball", icon: "*", cost: ORB_COST, cd: .35, full: 1.6, col: [255, 130, 40], chs: "*+", desc: "hold to pour all your mana into one fireball", cast: (pow, dx, dy) => castDir(dx, dy, pow)},
+    {id: "leap", name: "Inferno Leap", icon: "^", cost: 18, cd: 1.4, full: 1.1, col: [255, 120, 40], chs: "^'", desc: "leap onto the target and land in an explosion of fire", cast: castLeap},
+    {id: "erupt", name: "Eruption", icon: "✸", cost: 30, cd: 3, full: 1.4, col: [255, 90, 30], chs: "^*", desc: "a ring of fire bursts out around you and keeps burning", cast: castEruption},
+  ],
+  [ // Sorcerer: arcane
+    {id: "missiles", name: "Arcane Missiles", icon: "∴", cost: 12, cd: .5, full: 1.3, col: [200, 140, 255], chs: "o·", desc: "a volley of strongly homing violet orbs", cast: castMissiles},
+    {id: "bolt", name: "Chain Lightning", icon: "ϟ", cost: BOLT_COST, cd: BOLT_CD, full: 1.4, col: [120, 180, 255], chs: "-/\\", desc: "a spark that calls lightning and chains between targets", cast: pow => castBolt(pow)},
+    {id: "meteor", name: "Meteor", icon: "☄", cost: 32, cd: 3.2, full: 1.6, col: [255, 140, 60], chs: "*@", desc: "a meteor falls on the target after a short warning", cast: castMeteor},
+  ],
+  [ // Shadow: smoke and steel
+    {id: "daggers", name: "Shadow Daggers", icon: "≡", cost: 10, cd: .45, full: 1.1, col: [150, 255, 200], chs: "-'", desc: "a fan of fast knives", cast: castDaggers},
+    {id: "strike", name: "Shadowstrike", icon: "↯", cost: 16, cd: 2.5, full: 1, col: [120, 255, 190], chs: "~.", desc: "vanish and reappear behind the nearest enemy, stabbing them in the back", cast: castStrike},
+    {id: "smoke", name: "Smoke Bomb", icon: "◍", cost: 26, cd: 6, full: 1.2, col: [150, 175, 165], chs: "~≈", desc: "a cloud that hides you from enemies and poisons them", cast: castSmoke},
+  ],
+];
+const kit = (ki = myClass) => KITS[ki] || KITS[0];
+const spellOf = kind => { const i = SLOT_KEYS.indexOf(kind); return i < 0 ? null : kit()[i]; };
+const SLAM_COL = [230, 200, 150];
+const colOf = kind => kind === "slam" ? SLAM_COL : (spellOf(kind) || {col: SLAM_COL}).col;
+const LEGACY_READY = {fire: () => cd <= 0, bolt: () => boltCd <= 0, blades: () => bladeCd <= 0};
+function slotReady(kind) {
+  const sp = spellOf(kind); if (!sp) return false;
+  return spellCd[kind] <= 0 && (!LEGACY_READY[sp.id] || LEGACY_READY[sp.id]());
+}
+// cast a slot's spell now (pow 0..1); used by charge release, the hotbar and taps
+function castSlot(kind, pow, dx, dy) {
+  const sp = spellOf(kind); if (!sp || !slotReady(kind) || player.dead || player.roll || player.slam) return;
+  const mp0 = player.mp;
+  sp.cast(pow, dx, dy, kind);
+  if (player.mp < mp0) spellCd[kind] = sp.cd; // only start the cooldown if it actually went off
+}
+function refreshKitUI() { // hotbar slots 2-4 and the phone spell buttons show this class's spells
+  kit().forEach((sp, i) => {
+    const b = $("slot" + (i + 2)); if (b) { b.childNodes[1].textContent = sp.icon; b.title = `${sp.name} · ${sp.cost} MP · ${["F", "G", "R"][i]} · ${sp.desc} · hold to charge`; }
+    const t = $(["castBtn", "boltBtn", "bladeBtn"][i]); if (t) { t.textContent = sp.icon; t.setAttribute("aria-label", sp.name); }
+  });
+  const ds = DASHES[myClass], b = $("slot6");
+  if (b) { b.childNodes[1].textContent = ds.icon; b.title = `${ds.name} · C or Ctrl · ${ds.desc}`; }
+  const rb = $("rollBtn"); if (rb) { rb.textContent = ds.icon; rb.setAttribute("aria-label", ds.name); }
+}
+// pay a spell's (charged) cost; returns the mana spent, or -1 if you can't afford it
+function payFor(kind, pow) { const c = chargeCost(pow, kind); if (player.mp < c) { noMana(); return -1; } player.mp -= c; player.recoil = .2 + pow * .1; return c; }
+// where a targeted spell lands: the cursor on desktop, ahead of you on touch; snaps onto a nearby enemy
+function aimTarget(range, snap = 8) {
+  let tx, ty;
+  if (!isTouch && mouseXY.seen) [tx, ty] = screenToWorld(mouseXY.x, mouseXY.y);
+  else { tx = player.x + player.dx * range * .75; ty = player.y + player.dy * range * .75 / VS; }
+  let vx = tx - player.x, vy = (ty - player.y) * VS; const l = Math.hypot(vx, vy);
+  if (l > range) { vx *= range / l; vy *= range / l; tx = player.x + vx; ty = player.y + vy / VS; }
+  let best = null, bd = snap;
+  for (const d of targets()) { if (d.stealth) continue; const dd = gdist(d.x, d.y, tx, ty); if (dd < bd) { bd = dd; best = d; } }
+  if (best) { tx = best.x; ty = best.y; }
+  if (l > .5) { player.dx = vx / l; player.dy = vy / l; if (Math.abs(vx) > .5) player.face = vx > 0 ? 1 : -1; }
+  return [tx, ty];
+}
+const unit = (dx, dy) => { const l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
+function faceDir(dx) { if (Math.abs(dx) > .2) player.face = dx > 0 ? 1 : -1; }
+function shoot(p) { projectiles.push({...p, own: true, owner: selfId, hits: new Set()}); return p; }
+
+// ---- Knight ----
+function castWave(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  [dx, dy] = unit(dx, dy); faceDir(dx); player.dx = dx; player.dy = dy; player.atk = .26;
+  const sp = 78, p = shoot({kind: "wave", x: player.x + dx * 2, y: player.y + dy / VS, z: 3, vx: dx * sp, vy: dy * sp / VS, life: .55 + pow * .3, ph: 0, pow, dmg: c * 3.4, r: 3.4 + pow * 3.5});
+  netFx({k: "proj", p}); sfx.slash(3); sfx.zap(.4);
+}
+function castJudgment(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  const [x, y] = aimTarget(32), j = {x, y, t: 0, delay: .6, r: 4.6 + pow * 3.4, dmg: c * 2.9, pow};
+  judgments.push({...j, own: true}); netFx({k: "judg", j}); sfx.bladeSummon(.6);
+}
+// ---- Berserker ----
+function castLeap(pow, dx, dy, kind) {
+  if (slamCd > 0) return;
+  const c = payFor(kind, pow); if (c < 0) return;
+  const [tx, ty] = aimTarget(24 + pow * 14, 6);
+  // land on the last open spot along the way
+  let x1 = player.x, y1 = player.y; const L = gdist(player.x, player.y, tx, ty), n = Math.ceil(L / .6);
+  for (let i = 1; i <= n; i++) { const x = player.x + (tx - player.x) * i / n, y = player.y + (ty - player.y) * i / n; if (blockedAt(x, y) || matAt(x, y) === 1) break; x1 = x; y1 = y; }
+  player.slam = {t: 0, pow, hit: false, dx: player.dx, dy: player.dy, leap: {x0: player.x, y0: player.y, x1, y1}, dmg: c * 3.3};
+  sfx.dash();
+}
+function eruptFx(x, y, pow, own) {
+  const R = 9 + pow * 6;
+  shakeAt(x, y, .55 + pow * .4); sfx.explode(.7 + pow * .5, ...heard(x, y));
+  rings.push({x, y, r: 2, r1: R * 1.5, t: 0, life: .45, c: [255, 120, 40]}); rings.push({x, y, r: 1, r1: R, t: -.06, life: .4, c: [255, 210, 120]});
+  tempLights.push({x, y, r: 34 + pow * 20, i: 3, c: [1, .5, .15], life: .6, max: .6});
+  for (let k = 0; k < (isTouch ? 40 : 80); k++) { const a = rnd() * 6.283, s = 10 + rnd() * 24; particles.push({x, y, z: .5, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 6 + rnd() * 10, g: -14, life: .5 + rnd() * .5, max: 1, ch: ["^", "*", "'"][k % 3], c0: [255, 230, 140], c1: [200, 40, 10]}); }
+  for (let k = 0; k < 6; k++) { const a = k / 6 * 6.283; addResidue("fire", x + Math.cos(a) * R * .55, y + Math.sin(a) * R * .55 / VS, 2.6 + pow * 1.5, own); }
+}
+function castEruption(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  const R = 9 + pow * 6, dmg = c * 2.6;
+  hitDummies(player.x, player.y, R, (d, dist) => damage(d, dmg * (1 - .4 * dist / R), "fire"));
+  hitstop = Math.max(hitstop, .06); screenFlashAdd(.1 + pow * .1, "#ff9a50");
+  eruptFx(player.x, player.y, pow, true); netFx({k: "erupt", x: player.x, y: player.y, pow});
+}
+// ---- Sorcerer ----
+function castMissiles(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  [dx, dy] = unit(dx, dy); faceDir(dx); player.dx = dx; player.dy = dy;
+  const n = 3 + Math.round(pow * 4), base = Math.atan2(dy, dx), ps = [];
+  for (let i = 0; i < n; i++) {
+    const a = base + (i - (n - 1) / 2) * (1.1 / n), sp = 60 + rnd() * 10;
+    ps.push(shoot({kind: "missile", x: player.x + Math.cos(a) * 2, y: player.y + Math.sin(a) / VS, z: 3.4, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp / VS, life: 1.1 + pow * .3, ph: rnd() * 6, pow: 0, dmg: c * 4.6 / n * 1.15, turn: 5}));
+  }
+  netFx({k: "projs", ps}); sfx.zap(); sfx.teleport(.25);
+}
+function castMeteor(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  const [x, y] = aimTarget(38, 6), m = {x, y, t: 0, fall: .95, pow: .4 + pow * .6, dmg: c * 5};
+  meteors.push({...m, own: true}); netFx({k: "meteor", m}); sfx.fireCast(.7);
+}
+// ---- Shadow ----
+function castDaggers(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  [dx, dy] = unit(dx, dy); faceDir(dx); player.dx = dx; player.dy = dy; player.atk = .2;
+  const n = 3 + Math.round(pow * 4), spread = .45 + pow * .35, base = Math.atan2(dy, dx), ps = [];
+  for (let i = 0; i < n; i++) {
+    const a = base + (n > 1 ? (i / (n - 1) - .5) * spread : 0), sp = 125;
+    ps.push(shoot({kind: "dagger", x: player.x + Math.cos(a) * 2, y: player.y + Math.sin(a) / VS, z: 3.2, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp / VS, life: .34 + pow * .12, ph: 0, pow: 0, dmg: c * 2.4}));
+  }
+  netFx({k: "projs", ps}); sfx.slash(0); sfx.slash(1, .6);
+}
+function smokePuff(x, y, n = 24) {
+  for (let k = 0; k < n; k++) { const a = rnd() * 6.283, s = 3 + rnd() * 9; particles.push({x, y, z: rnd() * 5, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 1 + rnd() * 3, g: 0, life: .7 + rnd() * .6, max: 1.3, ch: ["~", "≈", "."][k % 3], c0: [150, 175, 165], c1: [30, 40, 36]}); }
+}
+// walk a straight line from the player and return the last open spot within `dist` (stops at walls / deep water)
+function openAlong(dx, dy, dist) {
+  let x1 = player.x, y1 = player.y; const n = Math.ceil(dist / .6);
+  for (let i = 1; i <= n; i++) { const x = player.x + dx * dist * i / n, y = player.y + dy * dist * i / n / VS; if (blockedAt(x, y) || matAt(x, y) === 1) break; x1 = x; y1 = y; }
+  return [x1, y1];
+}
+function castStrike(pow, dx, dy, kind) {
+  // the nearest enemy roughly where you're aiming (or anywhere close), not hidden in smoke
+  const range = 30 + pow * 14;
+  let t = seekTarget(player.x, player.y, ...unit(dx, dy), 1.4, range);
+  if (!t) for (const d of targets()) if (!d.stealth && gdist(d.x, d.y, player.x, player.y) < range * .6 && (!t || gdist(d.x, d.y, player.x, player.y) < gdist(t.x, t.y, player.x, player.y))) t = d;
+  if (!t) { addLog("Shadowstrike: no enemy in reach.", "System", "warn"); return; }
+  const c = payFor(kind, pow); if (c < 0) return;
+  const back = -(t.face || (player.x < t.x ? 1 : -1)); // the side they're turned away from
+  let x1 = t.x + back * 3.2, y1 = t.y;
+  if (blockedAt(x1, y1) || matAt(x1, y1) === 1) { x1 = t.x - back * 3.2; if (blockedAt(x1, y1) || matAt(x1, y1) === 1) { x1 = t.x; y1 = t.y + 1.5; } }
+  const from = [player.x, player.y];
+  smokePuff(from[0], from[1]); player.x = x1; player.y = y1; smokePuff(x1, y1, 16);
+  player.face = t.x > x1 ? 1 : -1; player.dx = player.face; player.dy = 0; player.atk = .26;
+  player.prot = Math.max(player.prot, performance.now() + 250);
+  netFx({k: "blink", a: from, b: [x1, y1]}); sfx.teleport(.7); sfx.slash(2);
+  const was = player.stealth; player.stealth = true; // the strike from nowhere counts as a backstab
+  damage(t, 70 + c * 3, "phys"); t.jit = .4;
+  player.stealth = was;
+  hitstop = Math.max(hitstop, .1); shake = Math.max(shake, .3);
+  rings.push({x: t.x, y: t.y, r: 1, r1: 6, t: 0, life: .25, c: [120, 255, 190]});
+}
+function castSmoke(pow, dx, dy, kind) {
+  const c = payFor(kind, pow); if (c < 0) return;
+  const r = 7 + pow * 4, life = 5 + pow * 2;
+  addResidue("smoke", player.x, player.y, r, true, life); smokePuff(player.x, player.y, 40);
+  netFx({k: "smoke", x: player.x, y: player.y, r, life}); sfx.fireCast(0, .6);
+}
+
+// delayed area spells
+const judgments = [], meteors = [], rifts = [];
+function updateDelayed(dt) {
+  for (const k of SLOT_KEYS) spellCd[k] = Math.max(0, spellCd[k] - dt);
+  for (let i = rifts.length - 1; i >= 0; i--) {
+    const r = rifts[i]; r.t += dt;
+    if (r.t >= RIFT_DELAY) { riftBurst(r); rifts.splice(i, 1); }
+  }
+  for (let i = judgments.length - 1; i >= 0; i--) {
+    const j = judgments[i]; j.t += dt;
+    if (!j.fired && j.t >= j.delay) {
+      j.fired = true;
+      if (j.own) hitDummies(j.x, j.y, j.r, (d, dist) => damage(d, j.dmg * (1 - .4 * dist / j.r), "holy"));
+      shakeAt(j.x, j.y, .45); const [v, pan] = heard(j.x, j.y, 120); sfx.thunder(v * .6, pan); sfx.hit(1, v, pan);
+      rings.push({x: j.x, y: j.y, r: 1, r1: j.r * 1.6, t: 0, life: .4, c: [255, 225, 140]});
+      tempLights.push({x: j.x, y: j.y, r: 40, i: 3.2, c: [1, .88, .55], life: .5, max: .5});
+      if (gdist(j.x, j.y, player.x, player.y) < 60) screenFlashAdd(.1, "#fff1c4");
+      for (let k = 0; k < 40; k++) { const a = rnd() * 6.283, r = rnd() * j.r; particles.push({x: j.x + Math.cos(a) * r, y: j.y + Math.sin(a) * r / VS, z: rnd() * 2, vx: 0, vy: 0, vz: 10 + rnd() * 16, g: 0, life: .5, max: .5, ch: ["+", "'", "|"][k % 3], c0: [255, 250, 220], c1: [255, 180, 60]}); }
+    }
+    if (j.t > j.delay + .55) judgments.splice(i, 1);
+  }
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i]; m.t += dt;
+    const k = Math.min(1, m.t / m.fall), mx = m.x + (1 - k) * 22, my = m.y - (1 - k) * 46;
+    if (rnd() < .9) particles.push({x: mx, y: my, z: 0, vx: 8, vy: -14, vz: 0, g: 0, life: .4, max: .4, ch: ["*", "'", "."][(rnd() * 3) | 0], c0: [255, 220, 140], c1: [160, 40, 10]});
+    if (m.t >= m.fall) { explode(m.x, m.y, m.pow, m.dmg, m.own); meteors.splice(i, 1); }
+  }
+  // Shadow: standing inside your own smoke hides you from enemies
+  player.stealth = !player.dead && residues.some(r => r.kind === "smoke" && r.own && gdist(r.x, r.y, player.x, player.y) < r.r * .85);
+}
+function drawDelayed() {
+  for (const r of rifts) { // a tear in the air where the Sorcerer stood, folding in on itself
+    const k = r.t / RIFT_DELAY, R = riftR(r.b);
+    glow(r.x, r.y - 2, [170, 90, 255], R * (1.4 - k * .6), .5 + .4 * k);
+    for (let i = 0; i < 12; i++) {
+      const a = time * 7 + i * .5236, d = R * (1 - k * .7) * (.4 + (i % 3) * .3);
+      glyph(i % 2 ? "*" : "·", r.x + Math.cos(a) * d, r.y - 2 + Math.sin(a) * d / VS, 220, 180, 255, .9);
+    }
+  }
+  for (const j of judgments) {
+    const X = sx(j.x), Y = sy(j.y);
+    if (!j.fired) { // a shrinking golden ring warns where the light will fall
+      const k = j.t / j.delay;
+      octx.globalAlpha = .5 + .5 * k; octx.lineWidth = 2 * dpr; octx.strokeStyle = "rgb(255,220,130)";
+      octx.beginPath(); octx.ellipse(X, Y, j.r * CW * (1.6 - k * .6), j.r / VS * CH * (1.6 - k * .6), 0, 0, 6.283); octx.stroke();
+      glow(j.x, j.y, [255, 210, 110], j.r * 2, .3 + .3 * k);
+    } else { // the pillar of light
+      const k = (j.t - j.delay) / .55, w = Math.max(j.r * CW * 1.2, 16 * dpr) * (1 - k * .5), top = Y - Math.max(60 * CH, 400 * dpr);
+      const g = octx.createLinearGradient(0, Y, 0, top);
+      g.addColorStop(0, `rgba(255,245,210,${.9 * (1 - k)})`); g.addColorStop(.4, `rgba(255,210,110,${.45 * (1 - k)})`); g.addColorStop(1, "rgba(255,200,100,0)");
+      octx.globalAlpha = 1; octx.fillStyle = g; octx.fillRect(X - w / 2, top, w, Y - top);
+      glow(j.x, j.y, [255, 230, 160], j.r * 3, (1 - k) * .9);
+    }
+  }
+  for (const m of meteors) {
+    const k = Math.min(1, m.t / m.fall), mx = m.x + (1 - k) * 22, my = m.y - (1 - k) * 46;
+    octx.globalAlpha = .25 + .45 * k; octx.lineWidth = 1.5 * dpr; octx.strokeStyle = "rgb(255,90,50)"; // landing warning
+    octx.beginPath(); octx.ellipse(sx(m.x), sy(m.y), (6 + m.pow * 6) * CW, (6 + m.pow * 6) / VS * CH, 0, 0, 6.283); octx.stroke();
+    glow(mx, my, [255, 120, 40], 10 + m.pow * 8, 1); glyph("@", mx, my, 255, 240, 200, 1);
+  }
+}
+function drawSmoke() { // smoke clouds drift over everything inside them
+  for (const r of residues) {
+    if (r.kind !== "smoke") continue;
+    const k = Math.min(1, r.life / r.max * 3), n = isTouch ? 26 : 50;
+    for (let i = 0; i < n; i++) {
+      const a = i * 2.399 + time * (.2 + (i % 5) * .05), d = Math.sqrt((i + .5) / n) * r.r;
+      const x = r.x + Math.cos(a) * d, y = r.y + Math.sin(a) * d / VS - 1.5 - Math.sin(time + i) * .8;
+      glyph(i % 3 ? "~" : "≈", x, y, 120 + (i % 4) * 12, 140 + (i % 4) * 10, 132, .55 * k);
+    }
+  }
+}
+
+/* ============================== dashes and class signatures ============================== */
+/* Tap the dash for a quick dodge (a moment of invulnerability). Keep holding it and the dash carries on as a
+   steerable sprint at almost twice running speed, burning mana every moment (no regen while sprinting).
+   Each class also has one thing nobody else has:
+   Knight - Shield Charge: his dash bowls over anyone in the way (damage + shove). Blocking a hit refunds mana.
+   Berserker - Bloodlust: under 40% HP his sword hits 40% harder and heals him for a fifth of the damage.
+   Sorcerer - Phase Shift: instead of rolling he teleports. It burns ALL his mana into a rift left where he stood
+     (it detonates a moment later, harder the more mana it ate). Mana keeps regenerating; the shift has a 5 s cooldown.
+   Shadow - Backstab: sword hits from behind or from inside smoke always crit. Sprinting costs her half. */
+const DASH_KEYS = new Set(["KeyC", "Digit6", "ControlLeft"]);
+const SURGE_SPEED = 92, SURGE_MP = 26, KNOCK_T = .22, BLOOD_HP = .4, BLOCK_MP = 8;
+const PHASE_CD = 5, PHASE_DIST = 26, RIFT_DELAY = .55;
+const DASHES = [
+  {name: "Shield Charge", icon: "⛨", desc: "dash through enemies, knocking them back · hold to keep charging (drains mana)"},
+  {name: "Rampage", icon: "»", desc: "dodge roll · hold to keep sprinting (drains mana)"},
+  {name: "Phase Shift", icon: "✧", desc: "teleport; leaves all your mana behind as an exploding rift · 5 s cooldown"},
+  {name: "Shadow Dash", icon: "»", desc: "dodge roll · hold to sprint at half the mana cost"},
+];
+let dashHeld = false;
+const dashHits = new Map();
+function shieldCharge() { // Knight: anyone the dash runs into is hit and shoved aside (once per 0.6 s each)
+  if (myClass !== 0 || player.dead) return;
+  const r = player.roll, s = player.surge;
+  if (!(r && r.t < ROLL_TIME) && !s) return;
+  const dx = s ? s.dx : r.dx, dy = s ? s.dy : r.dy;
+  for (const d of targets()) {
+    if (d.dead || gdist(d.x, d.y, player.x, player.y) > 4 || time - (dashHits.get(d) || -9) < .6) continue;
+    dashHits.set(d, time);
+    const sx_ = d.x - player.x, sy_ = (d.y - player.y) * VS, l = Math.hypot(sx_, sy_) || 1;
+    const px = (dx * .6 + sx_ / l * .4) * 46, py = (dy * .6 + sy_ / l * .4) * 46; // mostly along the charge, a bit outward
+    damage(d, 46, "phys", [px, py]); d.jit = .4;
+    shake = Math.max(shake, .3); hitstop = Math.max(hitstop, .06);
+    rings.push({x: d.x, y: d.y, r: 1, r1: 5, t: 0, life: .2, c: [190, 220, 255]});
+    sfx.bladeImpact(.8);
+  }
+}
+const riftR = b => 5 + b / 12;
+function riftBurst(r) {
+  const R = riftR(r.b);
+  if (r.own) hitDummies(r.x, r.y, R, (d, dist) => damage(d, (20 + r.b * 2.2) * (1 - .4 * dist / R), "arcane"));
+  shakeAt(r.x, r.y, .35 + r.b / 200); sfx.thunder(...heard(r.x, r.y, 100));
+  rings.push({x: r.x, y: r.y, r: 1, r1: R * 1.5, t: 0, life: .35, c: [200, 140, 255]});
+  rings.push({x: r.x, y: r.y, r: R * 1.5, r1: 1, t: 0, life: .3, c: [255, 230, 255]}); // implodes, then bursts
+  tempLights.push({x: r.x, y: r.y, r: 30 + r.b / 3, i: 2.6, c: [.7, .45, 1], life: .45, max: .45});
+  for (let k = 0; k < (isTouch ? 30 : 60); k++) { const a = rnd() * 6.283, s = 8 + rnd() * 22; particles.push({x: r.x, y: r.y, z: 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: (rnd() - .5) * 10, g: 0, life: .4 + rnd() * .4, max: .8, ch: ["*", "·", "+", "'"][k % 4], c0: [240, 220, 255], c1: [110, 50, 220]}); }
+}
+function phaseFx(x0, y0, x1, y1) { // a violet streak between the two points and a flash at both ends
+  for (let k = 0; k < 20; k++) { const u = k / 19; particles.push({x: x0 + (x1 - x0) * u, y: y0 + (y1 - y0) * u, z: 3 + (rnd() - .5) * 2, vx: 0, vy: 0, vz: 0, g: 0, delay: u * .06, life: .3, max: .3, ch: "·", c0: [235, 210, 255], c1: [110, 50, 220]}); }
+  for (const [x, y] of [[x0, y0], [x1, y1]]) for (let k = 0; k < 14; k++) { const a = rnd() * 6.283, s = 6 + rnd() * 10; particles.push({x, y, z: 2 + rnd() * 3, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 2, g: 0, life: .4, max: .4, ch: "*", c0: [240, 220, 255], c1: [120, 60, 230]}); }
+  sfx.teleport(...heard(x1, y1));
+}
+function phaseShift() {
+  if (player.dead || player.slam) return;
+  if (player.rollCd > 0) return;
+  let ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0) + stick.x, iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0) + stick.y;
+  if (Math.hypot(ix, iy) < .1 && !isTouch && mouseXY.seen) { const [tx, ty] = screenToWorld(mouseXY.x, mouseXY.y); ix = tx - player.x; iy = (ty - player.y) * VS; }
+  if (Math.hypot(ix, iy) < .1) { ix = player.dx; iy = player.dy; }
+  [ix, iy] = unit(ix, iy);
+  const [x1, y1] = openAlong(ix, iy, PHASE_DIST), x0 = player.x, y0 = player.y;
+  const burned = Math.floor(player.mp);
+  player.mp = 0; player.rollCd = PHASE_CD; charge.on = false; player.shield = false;
+  player.x = x1; player.y = y1; player.dx = ix; player.dy = iy; faceDir(ix);
+  player.prot = Math.max(player.prot, performance.now() + 300); // slips whatever was about to land
+  rifts.push({x: x0, y: y0, t: 0, b: burned, own: true});
+  phaseFx(x0, y0, x1, y1); netFx({k: "rift", a: [x0, y0], b: [x1, y1], burned});
 }
 
 /* ============================== waystone travel ============================== */
@@ -2362,11 +2755,11 @@ async function joinRealm(want) {
       const p = net.peers.get(id); if (!p) return;
       p.heard = performance.now();
       p.buf.push({t: performance.now(), x: a[0], y: a[1], p: {fr: a[2], flip: !!a[3], lift: a[4], tilt: a[5], sX: a[6], sY: a[7], ss: a[8], side: !!a[9]},
-        hp: a[10], mhp: a[11], dead: !!a[12], face: a[13], ck: a[14], cp: a[15], prot: !!a[16], sh: a[17]});
+        hp: a[10], mhp: a[11], dead: !!a[12], face: a[13], ck: a[14], cp: a[15], prot: !!a[16], sh: a[17], stealth: !!a[18]});
       if (p.buf.length > 12) p.buf.shift();
     },
     fx(f, id) { onFx(f, id); },
-    hit(h, id) { applyHit(h.dmg, h.kind, id, h.x, h.y); },
+    hit(h, id) { applyHit(h.dmg, h.kind, id, h.x, h.y, h.kx, h.ky); },
     dh(h) { if (net.host) hostDummyHit(h.i, h.dmg, h.kind); },
     kill(k, id) { onKill(k.by, id); },
     snap(s, id) { applySnap(s, id); },
@@ -2393,6 +2786,15 @@ function onFx(f, id) {
   else if (f.k === "spark") sparks.push({...f.s, t: 0, own: false, owner: id});
   else if (f.k === "blades") for (const b of f.b) blades.push({...b, own: false, who: p});
   else if (f.k === "slam") slamFx(f.x, f.y, f.pow);
+  else if (f.k === "proj") projectiles.push({...f.p, own: false, owner: id});
+  else if (f.k === "projs") for (const q of f.ps) projectiles.push({...q, own: false, owner: id});
+  else if (f.k === "judg") judgments.push({...f.j, own: false});
+  else if (f.k === "meteor") meteors.push({...f.m, own: false});
+  else if (f.k === "boom") explode(f.x, f.y, f.pow, f.dmg, false);
+  else if (f.k === "erupt") eruptFx(f.x, f.y, f.pow, false);
+  else if (f.k === "rift") { phaseFx(f.a[0], f.a[1], f.b[0], f.b[1]); rifts.push({x: f.a[0], y: f.a[1], t: 0, b: f.burned, own: false}); }
+  else if (f.k === "blink") { smokePuff(f.a[0], f.a[1]); smokePuff(f.b[0], f.b[1]); sfx.teleport(...heard(f.b[0], f.b[1])); }
+  else if (f.k === "smoke") { addResidue("smoke", f.x, f.y, f.r, false, f.life); smokePuff(f.x, f.y, 30); }
   else if (f.k === "tp") { tpBurst(f.a[0], f.a[1]); tpBurst(f.b[0], f.b[1]); sfx.teleport(...heard(f.b[0], f.b[1])); }
   else if (f.k === "sl") {
     const base = Math.atan2(f.dy, f.dx), s = p.face || 1;
@@ -2402,13 +2804,15 @@ function onFx(f, id) {
 }
 
 // I've been hit by someone else's attack
-function applyHit(dmg, kind, by, ax, ay) {
+function applyHit(dmg, kind, by, ax, ay, kx, ky) {
   if (player.dead || isProtected() || net.winner) return;
   if (player.roll && player.roll.t < ROLL_TIME) { floaters.push({x: player.x, y: player.y - 8, text: "DODGE", c: [200, 230, 255], big: .9, life: .8, max: .8, vx: 0}); return; }
   let blocked = false;
   if (player.shieldUp > .5 && ax !== undefined && Math.sign(ax - player.x || player.face) === player.face) { dmg *= .2; blocked = true; } // the shield faces where he faces
   dmg = Math.max(1, Math.round(dmg));
   player.hp = Math.max(0, player.hp - dmg); player.hurt = blocked ? 0 : .25; player.lastHurt = time;
+  if (blocked && myClass === 0) { player.mp = Math.min(player.mmp, player.mp + BLOCK_MP); floaters.push({x: player.x, y: player.y - 11, text: `+${BLOCK_MP} MP`, c: [130, 190, 255], big: .8, life: .8, max: .8, vx: 0}); }
+  if (!blocked && Number.isFinite(kx) && Number.isFinite(ky)) player.knock = {vx: clamp(kx, -60, 60), vy: clamp(ky, -60, 60), t: KNOCK_T};
   if (ax !== undefined && !blocked) hitMarks.push({a: Math.atan2((ay - player.y) * VS, ax - player.x), t: 0, k: Math.min(1, .35 + dmg / 80)});
   if (blocked) sfx.bladeImpact(.7); else sfx.hurt();
   floaters.push({x: player.x + (rnd() - .5) * 2, y: player.y - 7, text: (blocked ? "BLOCK " : "-") + dmg, c: blocked ? [255, 226, 160] : [255, 92, 80], big: 1 + Math.min(1, dmg / 120), life: 1.1, max: 1.1, vx: (rnd() - .5) * 4});
@@ -2418,7 +2822,7 @@ function applyHit(dmg, kind, by, ax, ay) {
 }
 function die(by) {
   sfx.death();
-  player.dead = DEATH_TIME; player.hp = 0; charge.on = false; player.shield = false; player.roll = null; player.slam = null;
+  player.dead = DEATH_TIME; player.hp = 0; charge.on = false; player.shield = false; player.roll = null; player.slam = null; player.surge = null; player.knock = null;
   banner("You were slain", `by ${nameOf(by)}`);
   for (let k = 0; k < 50; k++) { const a = rnd() * 6.283, s = 4 + rnd() * 14; particles.push({x: player.x, y: player.y, z: 2 + rnd() * 4, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 8, g: -20, life: .8 + rnd() * .6, max: 1.4, ch: ["*", "'", ".", "+"][k % 4], c0: [255, 140, 120], c1: [90, 20, 20]}); }
   if (net.api) net.api.send("kill", {by});
@@ -2574,7 +2978,7 @@ function updateNet(dt) {
     net.sendT = 1 / 15;
     const p = knightParams(), r2 = v => Math.round(v * 100) / 100;
     net.api.send("st", [r2(player.x), r2(player.y), p.fr, p.flip ? 1 : 0, r2(p.lift), r2(p.tilt), r2(p.sX), r2(p.sY), p.ss === null ? null : r2(p.ss), p.side ? 1 : 0,
-      Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["fire", "bolt", "blades", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), isProtected() ? 1 : 0, r2(player.shieldUp)]);
+      Math.ceil(player.hp), player.mhp, player.dead ? 1 : 0, player.face, charge.on ? ["s1", "s2", "s3", "slam"].indexOf(charge.kind) : -1, r2(charge.on ? chargePower() : 0), isProtected() ? 1 : 0, r2(player.shieldUp), player.stealth ? 1 : 0]);
   }
 }
 // other knights are drawn a moment in the past, blended between the two updates around that moment:
@@ -2589,7 +2993,7 @@ function interpolatePeers() {
     const k = c.t > a.t ? clamp((rt - a.t) / (c.t - a.t), 0, 1) : 1;
     const jump = Math.hypot(c.x - a.x, c.y - a.y) > 30; // respawned: snap instead of sliding across the map
     p.x = jump ? c.x : a.x + (c.x - a.x) * k; p.y = jump ? c.y : a.y + (c.y - a.y) * k;
-    Object.assign(p, {p: c.p, hp: c.hp, mhp: c.mhp, dead: c.dead, face: c.face, ck: c.ck, cp: c.cp, prot: c.prot, sh: c.sh});
+    Object.assign(p, {p: c.p, hp: c.hp, mhp: c.mhp, dead: c.dead, face: c.face, ck: c.ck, cp: c.cp, prot: c.prot, sh: c.sh, stealth: c.stealth});
   }
 }
 // a red glow on the screen edge facing whoever just hit you, fading over ~0.7 s
@@ -2608,7 +3012,7 @@ function drawPointers() {
   if (!net.api) return;
   const m = 28 * dpr;
   for (const p of livePeers()) {
-    if (p.dead) continue;
+    if (p.dead || (p.stealth && isEnemy(p.id))) continue;
     const X = sx(p.x), Y = sy(p.y - 4);
     if (X > m && X < Wpx - m && Y > m && Y < Hpx - m) continue;
     const cx = Wpx / 2, cy = Hpx / 2, dx = X - cx, dy = Y - cy;
@@ -2638,7 +3042,7 @@ function drawRemoteExtras(p) { // their HP bar (enemies) and any charge gatherin
   }
   if (p.ck >= 0) {
     octx.globalCompositeOperation = "lighter";
-    glow(p.x + p.face * 1.2, p.y - 3.2, CHARGE_COL[["fire", "bolt", "blades", "slam"][p.ck]], 4 + p.cp * 14, .5 + p.cp * .5);
+    glow(p.x + p.face * 1.2, p.y - 3.2, p.ck < 3 ? kit(p.cls || 0)[p.ck].col : SLAM_COL, 4 + p.cp * 14, .5 + p.cp * .5);
     octx.globalCompositeOperation = "source-over";
   }
   if (p.sh > .5) { octx.globalCompositeOperation = "lighter"; glow(p.x + p.face * 2.2, p.y - 3.4, [140, 200, 255], 8, .35); octx.globalCompositeOperation = "source-over"; }
@@ -2804,4 +3208,4 @@ syncMuteBtn();
 $("boardBtn").addEventListener("click", e => { e.stopPropagation(); const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 $("leaveBtn").addEventListener("click", e => { e.stopPropagation(); location.reload(); });
 start();
-if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net, damage, livePeers}; // dev-server-only handle for testing
+if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net, damage, livePeers, update, startRoll, hold: v => { dashHeld = v; }, dummies, rifts}; // dev-server-only handle for testing
