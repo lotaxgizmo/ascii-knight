@@ -23,7 +23,7 @@ Pick a name (no account), a class and a mode. Everyone online shares one realm a
 | ⚒ Berserker | Fireball, Inferno Leap, Eruption | Inferno Rush: leaves burning ground | Bloodlust: under 40% HP he hits harder and heals on hit |
 | ✦ Sorcerer | Arcane Missiles, Chain Lightning, Meteor | Phase Shift: chainable teleports (22 MP each) leaving purple ooze | Deepest mana, strongest spells |
 | ☾ Shadow | Shadow Daggers, Shadowstrike, Smoke Bomb | Shadow Step: invisible while dashing | Backstab: hits from behind or out of smoke always crit |
-| ☠ Necromancer | Soul Bolt (drains life), Raise Dead (costs blood + mana), Corpse Nova | Grave Swap: trade places with a minion | Skeleton minions fight for him |
+| ☠ Necromancer | Soul Bolt (drains life), Raise Dead (costs blood + mana), Corpse Nova | Grave Swap: trade places with a minion | His minions are little purple copies of him |
 | ✟ Angel | Holy Lance, Radiance (heal + ward), Starfall | Radiant Glide: a long glide | Flies over water and lava, immune to burning ground |
 
 Tap the dash for a dodge; **hold it to keep sprinting** while mana drains. Max HP never grows during a match; kills add damage and mana. Mana also comes back faster while moving, from melee hits and in a waystone's light.

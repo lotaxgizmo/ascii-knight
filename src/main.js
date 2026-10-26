@@ -836,7 +836,7 @@ const CLASSES = [
   {id: "shadow", name: "Shadow", icon: "☾", desc: "Fastest on foot. Dash turns her invisible. Backstab: hits from behind or out of smoke always crit.",
     hp: 105, mp: 60, speed: 1.15, melee: 1.1, spell: .9, regen: 1, dashCd: .6, arc: 1, reach: 1,
     tint: [.4, .5, .5], visor: [90, 255, 170], glow: [60, 255, 160], aura: "smoke"},
-  {id: "necromancer", name: "Necromancer", icon: "☠", desc: "Pays blood and mana to raise skeleton minions. Soul Bolts drain life; his dash swaps places with a minion.",
+  {id: "necromancer", name: "Necromancer", icon: "☠", desc: "Pays blood and mana to raise little purple copies of himself. Soul Bolts drain life; his dash swaps places with a minion.",
     hp: 110, mp: 80, speed: 1, melee: .8, spell: 1.1, regen: 1.1, dashCd: 1, arc: 1, reach: 1,
     tint: [.5, .74, .56], visor: [90, 255, 130], glow: [70, 255, 120], aura: "souls"},
   {id: "angel", name: "Angel", icon: "✟", desc: "Radiant and airborne: floats over water and lava, immune to burning ground, heals with light.",
@@ -878,7 +878,8 @@ function classAura(x, y, ki, alpha, hpk = 1) {
 /* AI-rendered knight frames: 8-direction run, idle, sword combo. Cut out and packed by
    art/build_knight.py into art/knight-atlas.webp + .json, ASCII-fied at runtime */
 const {stand: KSTAND, frames: KFR} = KATLAS_META;
-const KROWS = 22;                // text rows for a standing knight
+const KROWS = 22;
+const MINION_KI = 15, MINION_TINT = [1.15, .45, 1.6], MINION_CAPE = 4; // Necromancer minions: little purple copies of him                // text rows for a standing knight
 let KIMG = null, KN = {}, KNC = [];
 // every player wears their own cape colour: sprite sets are baked per palette index, on first use
 function bakeKnight() { if (!KIMG) return; KNC = []; KN = knSet(net.color, myClass); }
@@ -889,7 +890,7 @@ function knSet(ci, ki = 0) {
   return KNC[key] || (KNC[key] = new Proxy({}, {get: (o, n) => o[n] || (KFR[n] && KIMG ? (o[n] = bakeFrame(ci, n, ki)) : undefined)}));
 }
 function bakeFrame(ci, name, ki = 0) {
-  const tint = (CLASSES[ki] || CLASSES[0]).tint;
+  const tint = ki === MINION_KI ? MINION_TINT : (CLASSES[ki] || CLASSES[0]).tint;
   const fw = Math.max(2, Math.round(CW * .5)), fh = Math.max(3, Math.round(CH * .42));
   const ramp = " .:-=+*#%@";
   const bgk = fw < 4 ? .85 : .62, pal = PALETTE[ci] || PALETTE[0];
@@ -1062,7 +1063,7 @@ function drawMini() {
   }
   for (const m of mobList) { // the boss and its imps (red), minions (green)
     const qx = (m.x - sx) / sw * w, qy = (m.y - sy) / sh * h, z = (m.k === "boss" ? 7 : 2) * dpr;
-    x.fillStyle = m.k === "skel" ? "#7dff9a" : "#ff5a3a"; x.fillRect(qx - z / 2, qy - z / 2, z, z);
+    x.fillStyle = m.k === "skel" ? "#b77cff" : "#ff5a3a"; x.fillRect(qx - z / 2, qy - z / 2, z, z);
   }
   x.fillStyle = "#b58cff"; // waystones
   for (const w of WAYSTONES) { const qx = (w.x - sx) / sw * w0, qy = (w.y - sy) / sh * h; if (qx > 0 && qy > 0 && qx < w0 && qy < h) { x.beginPath(); x.moveTo(qx, qy - 3 * dpr); x.lineTo(qx + 2.5 * dpr, qy); x.lineTo(qx, qy + 3 * dpr); x.lineTo(qx - 2.5 * dpr, qy); x.fill(); } }
@@ -2487,7 +2488,7 @@ const KITS = [
   ],
   [ // Necromancer: blood, bone and souls
     {id: "soul", name: "Soul Bolt", icon: "☠", cost: 12, cd: .45, full: 1.2, col: [110, 255, 140], chs: "°.", desc: "a homing skull that drains a quarter of its damage back as health", cast: castSoul},
-    {id: "raise", name: "Raise Dead", icon: "⚰", cost: 16, cd: 1.2, full: 1.3, col: [170, 255, 170], chs: "°'", desc: "pay 12% of your health and mana to raise 2-5 skeleton minions (up to 5)", cast: castRaise},
+    {id: "raise", name: "Raise Dead", icon: "⚰", cost: 16, cd: 1.2, full: 1.3, col: [190, 120, 255], chs: "°'", desc: "pay 12% of your health and mana to raise 2-5 little purple copies of yourself (up to 5)", cast: castRaise},
     {id: "nova", name: "Corpse Nova", icon: "✺", cost: 20, cd: 2.5, full: 1.2, col: [140, 255, 120], chs: "*°", desc: "your minions explode, and a wave of death bursts out around you", cast: castNova},
   ],
   [ // Angel: light
@@ -2831,7 +2832,7 @@ function castRaise(pow, dx, dy, kind) {
   for (let i = 0; i < n; i++) {
     const a = rnd() * 6.283, x = player.x + Math.cos(a) * (3 + rnd() * 3), y = player.y + Math.sin(a) * (3 + rnd() * 3) / VS;
     spawnMob("skel", blockedAt(x, y) ? player.x : x, blockedAt(x, y) ? player.y : y);
-    for (let k = 0; k < 10; k++) particles.push({x, y, z: 0, vx: (rnd() - .5) * 4, vy: 0, vz: 4 + rnd() * 5, g: -6, life: .6, max: .6, ch: ["°", ".", "'"][k % 3], c0: [190, 255, 190], c1: [40, 100, 50]});
+    for (let k = 0; k < 10; k++) particles.push({x, y, z: 0, vx: (rnd() - .5) * 4, vy: 0, vz: 4 + rnd() * 5, g: -6, life: .6, max: .6, ch: ["°", ".", "'"][k % 3], c0: [230, 190, 255], c1: [90, 30, 150]});
   }
   const mine = myMobs.filter(m => m.k === "skel");
   for (let i = 0; i < mine.length - MAX_SKELS; i++) mine[i].life = .01; // the oldest crumble
@@ -2961,8 +2962,8 @@ function mobHurt(m, amt, kind) {
 }
 function mobDieFx(x, y, k) {
   const boss = k === "boss", n = boss ? (isTouch ? 70 : 140) : 14;
-  const c0 = k === "skel" ? [230, 255, 225] : [255, 200, 120], c1 = k === "skel" ? [60, 90, 60] : [160, 30, 10];
-  for (let i = 0; i < n; i++) { const a = rnd() * 6.283, s = (boss ? 14 : 6) + rnd() * (boss ? 40 : 14); particles.push({x, y, z: 1 + rnd() * (boss ? 14 : 3), vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 10, g: -20, life: .6 + rnd() * (boss ? 1.4 : .4), max: 2, ch: k === "skel" ? ["/", "\\", "°", "-"][i % 4] : ["*", "'", "^", "#"][i % 4], c0, c1}); }
+  const c0 = k === "skel" ? [235, 200, 255] : [255, 200, 120], c1 = k === "skel" ? [80, 30, 130] : [160, 30, 10];
+  for (let i = 0; i < n; i++) { const a = rnd() * 6.283, s = (boss ? 14 : 6) + rnd() * (boss ? 40 : 14); particles.push({x, y, z: 1 + rnd() * (boss ? 14 : 3), vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 10, g: -20, life: .6 + rnd() * (boss ? 1.4 : .4), max: 2, ch: k === "skel" ? ["*", "°", "'", "."][i % 4] : ["*", "'", "^", "#"][i % 4], c0, c1}); }
   if (boss) { shakeAt(x, y, 1.2); screenFlashAdd(.35, "#ffd090"); rings.push({x, y, r: 2, r1: 40, t: 0, life: .7, c: [255, 200, 120]}); tempLights.push({x, y, r: 90, i: 4, c: [1, .6, .3], life: 1.2, max: 1.2}); sfx.thunder(1, 0); }
   sfx.hit(boss ? 1 : .3, ...heard(x, y));
 }
@@ -3006,6 +3007,7 @@ function raidVictims() {
 }
 function nearest(m, list, range) { let best = null, bd = range; for (const t of list) { const d = gdist(t.x, t.y, m.x, m.y); if (d < bd) { bd = d; best = t; } } return best; }
 function mobStep(m, ux, uy, sp, dt, free) {
+  if (sp > 20) m.mv = true;
   const tx = m.x + ux * sp * dt, ty = m.y + uy * sp * dt / VS;
   if (free || !blockedAt(tx, m.y)) m.x = tx;
   if (free || !blockedAt(m.x, ty)) m.y = ty;
@@ -3015,7 +3017,7 @@ function updateMobs(dt) {
   if (!net.host || net.mode !== "boss") for (let i = myMobs.length - 1; i >= 0; i--) if (myMobs[i].k !== "skel") myMobs.splice(i, 1);
   for (let i = myMobs.length - 1; i >= 0; i--) {
     const m = myMobs[i], def = MOB[m.k];
-    m.flash = Math.max(0, m.flash - dt); m.a = Math.max(0, m.a - dt); m.atkT -= dt;
+    m.flash = Math.max(0, m.flash - dt); m.a = Math.max(0, m.a - dt); m.atkT -= dt; m.mv = false;
     if (m.life !== undefined) { m.life -= dt; if (m.life <= 0) { mobDie(m); continue; } }
     if (m.k === "boss") { bossThink(m, dt); continue; }
     let t;
@@ -3140,7 +3142,29 @@ function mobSprite(k) {
   }));
   return mobSprites[k] = c;
 }
+// a Necromancer's minion: a half-size purple copy of him, running, swinging or standing like a real knight
+function drawMinion(m) {
+  const X = sx(m.x), Y = sy(m.y);
+  if (X < -60 * dpr || X > Wpx + 60 * dpr || Y < -60 * dpr || Y > Hpx + 60 * dpr) return;
+  const moving = m.owner === selfId ? m.mv : Math.hypot((m.tx ?? m.x) - m.x, (m.ty ?? m.y) - m.y) > .05;
+  const side = (m.face || 1) > 0 ? "E" : "W", fr = m.a > 0 ? "atk_hslash" : moving ? `run8_${side}_${Math.floor(time * 11 + m.id) % 6}` : `idle_${side}`;
+  const k = knSet(MINION_CAPE, MINION_KI)[fr]; if (!k) return;
+  octx.globalAlpha = .45; octx.fillStyle = "#000";
+  octx.beginPath(); octx.ellipse(X, Y, CW * 1.8, CH * .4, 0, 0, 6.283); octx.fill();
+  octx.globalAlpha = .7; octx.strokeStyle = `rgb(${PALETTE[m.owner === selfId ? net.color : colorOf(m.owner)].join(",")})`; octx.lineWidth = 1.2 * dpr; // whose minion
+  octx.beginPath(); octx.ellipse(X, Y, CW * 2, CH * .45, 0, 0, 6.283); octx.stroke();
+  octx.globalCompositeOperation = "lighter"; glow(m.x, m.y - 2, [170, 70, 255], 5, .35); octx.globalCompositeOperation = "source-over";
+  octx.globalAlpha = .95; drawSprite(k, false, m.x, m.y, 0, .55, .55, 0, null);
+  if (m.flash > 0) { octx.globalCompositeOperation = "lighter"; octx.globalAlpha = m.flash / .12 * .6; drawSprite(k, false, m.x, m.y, 0, .55, .55, 0, null); octx.globalCompositeOperation = "source-over"; }
+  if (m.hp < m.mhp) {
+    const w = 4 * CW, h = Math.max(2, 2 * dpr), bx = X - w / 2, by = Y - k.h * .55 - 4 * dpr;
+    octx.globalAlpha = .85; octx.fillStyle = "#0b0b0f"; octx.fillRect(bx - dpr, by - dpr, w + 2 * dpr, h + 2 * dpr);
+    octx.fillStyle = mobHostile(m) ? "#d8443a" : "#b77cff"; octx.fillRect(bx, by, w * Math.max(0, m.hp / m.mhp), h);
+  }
+  octx.globalAlpha = 1;
+}
 function drawMob(m) {
+  if (m.k === "skel") { drawMinion(m); return; }
   const X = sx(m.x), Y = sy(m.y), s = mobSprite(m.k), boss = m.k === "boss";
   if (X < -s.width || X > Wpx + s.width || Y < -40 * dpr || Y > Hpx + s.height) return;
   octx.globalAlpha = .45; octx.fillStyle = "#000";
