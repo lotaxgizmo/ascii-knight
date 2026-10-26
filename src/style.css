@@ -183,3 +183,81 @@ button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}
 #modeSel[hidden]{display:none}
 #modeSel button{all:unset;cursor:pointer;padding:2px 7px;border:1px solid var(--line);font:10px var(--mono);color:var(--fg)}
 #modeSel button.on{border-color:var(--rune);color:var(--rune)}
+/* class picker */
+.lb-classes{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.lb-classes button{all:unset;cursor:pointer;display:grid;gap:3px;padding:8px 9px;border:1px solid var(--line);background:rgba(255,255,255,.03);font:10px/1.35 var(--mono);color:var(--dim)}
+.lb-classes button:hover,.lb-classes button:focus-visible{border-color:var(--rune)}
+.lb-classes button[aria-checked="true"]{border-color:#ffe2a0;background:rgba(255,226,160,.08);color:var(--fg)}
+.lb-classes b{font:600 12.5px var(--mono);color:#ece5cf}
+.lb-classes .ic{margin-right:5px}
+.lb-classes .stats{display:grid;grid-template-columns:auto 1fr;gap:1px 6px;align-items:center;margin-top:2px}
+.lb-classes .stats i{display:block;height:3px;background:rgba(255,255,255,.08)}
+.lb-classes .stats i s{display:block;height:100%;background:var(--rune)}
+.mt-btns{display:flex;gap:2px}
+#muteBtn{all:unset;cursor:pointer;padding:0 6px;color:var(--fg);font:600 12px/1 var(--mono);border:1px solid transparent}
+#muteBtn.off{color:var(--dim)}
+#muteBtn:hover,#muteBtn:focus-visible{border-color:var(--line)}
+/* kill feed */
+#killfeed{position:fixed;z-index:5;right:calc(10px + env(safe-area-inset-right,0px));top:calc(190px + env(safe-area-inset-top,0px));display:grid;gap:3px;justify-items:end;pointer-events:none;font:600 10.5px var(--mono)}
+#killfeed .kf{padding:2px 7px;background:var(--panel);border:1px solid var(--line);color:var(--fg);white-space:nowrap;transition:opacity 1s}
+#killfeed .kf.me{border-color:rgba(255,226,160,.6);color:#ffe2a0}
+#killfeed .kf.dead{border-color:rgba(255,110,100,.6);color:#ffb3aa}
+#killfeed .kf.fade{opacity:0}
+@media (max-height:500px){#killfeed{top:calc(44px + env(safe-area-inset-top,0px));font-size:9px}}
+@media (max-width:640px){#killfeed{top:calc(150px + env(safe-area-inset-top,0px));font-size:9.5px}}
+/* lobby never clips: it scrolls when taller than the screen (margin:auto centres when there is room) */
+#lobby{display:flex;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y}
+#lobby .lb-card{margin:auto;flex-shrink:0}
+#lobby input{touch-action:manipulation}
+@media (max-height:520px){
+  .lb-card{gap:8px;padding:12px 14px;width:min(760px,100%)}
+  .lb-card h1{font-size:22px}
+  .lb-classes{grid-template-columns:repeat(4,1fr)}
+  .lb-classes button>span:not(.stats){display:none}
+  .lb-note{display:none}
+}
+@media (max-width:360px){.lb-classes{grid-template-columns:1fr}.lb-classes button>span:not(.stats){display:none}}
+/* the card's padding must not push it past the screen edge, and grid columns must be allowed to shrink */
+.lb-card{box-sizing:border-box;max-width:100%}
+.lb-classes{grid-template-columns:repeat(2,minmax(0,1fr))}
+.lb-classes button{min-width:0;box-sizing:border-box}
+.lb-classes .stats{grid-template-columns:auto minmax(0,1fr)}
+@media (max-height:520px){.lb-classes{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:360px){.lb-classes{grid-template-columns:minmax(0,1fr)}}
+/* ---- touch layout: the big buttons replace the hotbar; nothing overlaps at the bottom ---- */
+.touch #hotbar{display:none}
+.touch #bottom{left:0;right:0;transform:none;bottom:0;gap:0}
+.touch #xp{height:3px;border:0}
+.touch #slashBtn{right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(26px + env(safe-area-inset-bottom,0px))}
+.touch #castBtn{right:calc(104px + env(safe-area-inset-right,0px));bottom:calc(74px + env(safe-area-inset-bottom,0px))}
+.touch #boltBtn{right:calc(28px + env(safe-area-inset-right,0px));bottom:calc(116px + env(safe-area-inset-bottom,0px))}
+.touch #shieldBtn{right:calc(104px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+.touch #rollBtn{right:calc(166px + env(safe-area-inset-right,0px));bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+.touch #bladeBtn{right:calc(170px + env(safe-area-inset-right,0px));bottom:calc(104px + env(safe-area-inset-bottom,0px))}
+.touch #log{bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+.touch #travelBtn{bottom:calc(178px + env(safe-area-inset-bottom,0px))}
+@media (max-width:640px){
+  #score{top:calc(96px + env(safe-area-inset-top,0px));bottom:auto;max-width:calc(100vw - 24px)}
+  .touch #log{width:min(40vw,170px)}
+  #killfeed{top:calc(140px + env(safe-area-inset-top,0px))}
+}
+@media (max-height:500px){
+  .touch #slashBtn{right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+  .touch #castBtn{right:calc(84px + env(safe-area-inset-right,0px));bottom:calc(52px + env(safe-area-inset-bottom,0px))}
+  .touch #boltBtn{right:calc(18px + env(safe-area-inset-right,0px));bottom:calc(86px + env(safe-area-inset-bottom,0px))}
+  .touch #shieldBtn{right:calc(84px + env(safe-area-inset-right,0px));bottom:calc(4px + env(safe-area-inset-bottom,0px))}
+  .touch #rollBtn{right:calc(138px + env(safe-area-inset-right,0px));bottom:calc(28px + env(safe-area-inset-bottom,0px))}
+  .touch #bladeBtn{right:calc(140px + env(safe-area-inset-right,0px));bottom:calc(80px + env(safe-area-inset-bottom,0px))}
+  .touch #travelBtn{bottom:calc(10px + env(safe-area-inset-bottom,0px))}
+}
+@media (max-width:640px){
+  #score{top:calc(152px + env(safe-area-inset-top,0px))}
+  #mapbox.collapsed~#score,#score.below-collapsed{top:calc(96px + env(safe-area-inset-top,0px))}
+  #killfeed{top:calc(200px + env(safe-area-inset-top,0px))}
+}
+/* the match chip always fits between the corner panels; long text truncates instead of overlapping */
+#score{max-width:calc(100vw - 2 * 228px)}
+#scoreChip{max-width:100%;box-sizing:border-box}
+#scoreMini{min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-height:500px){#score{max-width:calc(100vw - 2 * 170px)}}
+@media (max-width:640px){#score{max-width:calc(100vw - 24px)}}

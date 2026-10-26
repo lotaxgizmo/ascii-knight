@@ -11,7 +11,11 @@ npm run build    # static site in dist/ (Vercel builds this automatically via ve
 
 Pick a name (no account) and enter the arena: everyone online plays one **Free for All** match (first to 15 kills) around the Stone Circle.
 
-**Desktop:** WASD / arrows or hold left mouse to move, Shift to run, Space or a quick left-click to slash (hold Space for a ground slam), F or right-click for fire, G lightning, R summon blades (hold any spell key to charge it with all your MP), hold Q to shield, C or Ctrl to dash, E to travel at a waystone, Tab for the scoreboard, mouse wheel or `-` / `=` to zoom.
+**Classes:** ⚔ **Knight** (wide, long sword sweep; balanced), ⚒ **Berserker** (burning brute: most HP and melee, weak magic), ✦ **Sorcerer** (arcane: biggest mana pool, strongest spells, fragile up close), ☾ **Shadow** (smoke and speed: fastest, quickest dash). Max HP never grows during a match; kills add damage and mana. Mana also comes back faster while moving, from melee hits and in a waystone's light.
+
+**Sound:** every effect and the ambience (wind, insects, water, campfire crackle) is synthesized live with Web Audio, no audio files. `M` or the ♪ button mutes.
+
+**Desktop:** WASD / arrows or hold left mouse to move, Shift to run, Space or a quick left-click to slash (hold Space for a ground slam), F or right-click for fire, G lightning, R summon blades (hold any spell key to charge it with all your MP), hold Q to shield, C or Ctrl to dash, E to travel at a waystone, Tab for the scoreboard, M to mute, mouse wheel or `-` / `=` to zoom.
 **Phone:** drag to move; `/` slash (hold to slam), `*` fire, `ϟ` lightning, `†` blades (hold any to charge), `◊` shield, `»` dash; pinch with two fingers to zoom.
 
 ## How it works

@@ -24,12 +24,13 @@
 </div>
 
 <div id="mapbox" class="panel">
-  <div class="mt"><span id="region">Stone Circle</span><button id="mapToggle" aria-label="Hide map" aria-expanded="true">–</button></div>
+  <div class="mt"><span id="region">Stone Circle</span><span class="mt-btns"><button id="muteBtn" aria-label="Mute sound">♪</button><button id="mapToggle" aria-label="Hide map" aria-expanded="true">–</button></span></div>
   <canvas id="mini"></canvas>
   <div class="mc"><span id="coords">X: 0 Y: 0</span><span>Player</span></div>
   <div id="zoom"><button id="zoomOut" aria-label="Zoom out">−</button><span id="zoomLv">100%</span><button id="zoomIn" aria-label="Zoom in">+</button></div>
 </div>
 <div id="fps">FPS 60 · frame 1.0 ms</div>
+<div id="killfeed" aria-live="polite"></div>
 <div id="banner"></div>
 
 <div id="log" class="panel">
@@ -63,6 +64,7 @@
     <h1>Gizmo Knight</h1>
     <p class="lb-sub">a moonlit realm drawn in text</p>
     <label class="lb-name">Your name<input id="pname" maxlength="16" autocomplete="off" spellcheck="false"></label>
+    <div class="lb-classes" role="radiogroup" aria-label="Choose your class" id="classPick"></div>
     <div class="lb-modes">
       <button data-mode="ffa"><b>Enter the Arena</b><small>Free for All · every knight for themself · first to 15 kills</small></button>
     </div>

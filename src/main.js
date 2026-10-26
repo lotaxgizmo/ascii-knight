@@ -2,6 +2,8 @@ import "./style.css";
 import KATLAS from "../art/knight-atlas.webp";
 import KATLAS_META from "../art/knight-atlas.json";
 import {connect, fetchTurn, selfId, relaysUp, RELAY_COUNT} from "./net.js";
+import * as audio from "./audio.js";
+const sfx = audio.sfx;
 
 /* ============================== constants ============================== */
 const VS = 2.0;                 // vertical squash: 1 cell down = 2 ground units (3/4 view)
@@ -643,6 +645,7 @@ gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
 /* sizes */
 let dpr = 1, CW = 6, CH = 10, Wpx = 0, Hpx = 0, SW = 0, SH = 0, FONT = "";
 const isTouch = matchMedia("(hover:none) and (pointer:coarse)").matches;
+if (isTouch) document.body.classList.add("touch"); // touch layout: big buttons, no hotbar
 function buildAtlas() {
   const n = [...ATLAS].length;
   const c = document.createElement("canvas"); c.width = n * CW; c.height = CH;
@@ -666,7 +669,7 @@ function setZoom(i) {
   clearTimeout(zoomT); zoomT = setTimeout(resize, 60); // coalesce wheel / pinch bursts
 }
 function resize() {
-  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  dpr = Math.min(window.devicePixelRatio || 1, QUALITY[quality].dpr);
   const small = Math.min(innerWidth, innerHeight) < 600, z = ZOOMS[zoomI];
   const cw = small ? 4 : 5, ch = small ? 7 : 8;
   CW = Math.max(2, Math.round(cw * dpr * z)); CH = Math.max(3, Math.round(ch * dpr * z));
@@ -697,6 +700,50 @@ const visited = new Set();
 const projectiles = [], particles = [], tempLights = [], fireflies = [], wisps = [];
 let TLx = 0, TLy = 0, OX = 0, OY = 0;
 
+/* ============================== character classes ============================== */
+/* Four classes share the knight's animations but differ in armour colour, aura, base stats and how hard
+   their sword and spells hit. Base HP differs per class but never grows during a match. */
+const CLASSES = [
+  {id: "knight", name: "Knight", icon: "⚔", desc: "Wide sweeping swing that reaches further; balanced.",
+    hp: 120, mp: 60, speed: 1, melee: 1, spell: 1, regen: 1, dashCd: 1, arc: 1.35, reach: 1.25,
+    tint: [.95, 1.02, 1.12], visor: [120, 220, 255], glow: [150, 200, 255], aura: "glint"},
+  {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute: huge melee and health, weak magic.",
+    hp: 140, mp: 45, speed: 1.03, melee: 1.3, spell: .75, regen: .85, dashCd: 1, arc: 1, reach: 1,
+    tint: [1.3, 1.02, .58], visor: [255, 110, 40], glow: [255, 110, 40], aura: "ember"},
+  {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Arcane: deep mana, devastating spells, fragile in melee.",
+    hp: 100, mp: 100, speed: .97, melee: .75, spell: 1.3, regen: 1.35, dashCd: 1.1, arc: 1, reach: 1,
+    tint: [.78, .58, 1.45], visor: [210, 140, 255], glow: [170, 90, 255], aura: "arcane"},
+  {id: "shadow", name: "Shadow", icon: "☾", desc: "Smoke and speed: fastest on foot, quick dash, sharp blade.",
+    hp: 105, mp: 60, speed: 1.15, melee: 1.1, spell: .9, regen: 1, dashCd: .6, arc: 1, reach: 1,
+    tint: [.4, .5, .5], visor: [90, 255, 170], glow: [60, 255, 160], aura: "smoke"},
+];
+let savedClass = 0; try { savedClass = clamp(+localStorage.getItem("gk.class") || 0, 0, CLASSES.length - 1); } catch (e) {}
+let myClass = savedClass;
+const C = () => CLASSES[myClass];
+function applyClass(ki) {
+  myClass = clamp(ki | 0, 0, CLASSES.length - 1);
+  const c = C();
+  player.mhp = c.hp + player.kb.hp; player.mmp = c.mp + player.kb.mp + (player.lv - 1) * 10;
+  player.hp = player.mhp; player.mp = player.mmp;
+  $("status").querySelector(".cls").textContent = c.name;
+  KNC = []; KN = knSet(net.color, myClass);
+  try { localStorage.setItem("gk.class", myClass); } catch (e) {}
+}
+// a class aura: a few particles a second around any knight of that class
+function classAura(x, y, ki, alpha) {
+  const cls = CLASSES[ki] || CLASSES[0], a = cls.aura;
+  octx.globalCompositeOperation = "lighter";
+  glow(x, y - 2.5, cls.glow, 9, (.28 + .08 * Math.sin(time * 3 + x)) * alpha);
+  if (a === "ember") glow(x, y - .3, [255, 80, 20], 7, (.35 + .15 * Math.sin(time * 9 + y)) * alpha); // fire at the feet
+  octx.globalCompositeOperation = "source-over";
+  if (!a || alpha < .6 || rnd() > (isTouch ? .12 : .35) * QUALITY[quality].fx) return;
+  if (a === "glint") { particles.push({x: x + (rnd() - .5) * 3, y, z: 2 + rnd() * 5, vx: 0, vy: 0, vz: 1, g: 0, life: .35, max: .35, ch: "+", c0: [230, 245, 255], c1: [90, 150, 255]}); return; }
+  if (a === "ember") { particles.push({x: x + (rnd() - .5) * 3.5, y, z: .5 + rnd() * 2, vx: (rnd() - .5) * 2, vy: 0, vz: 5 + rnd() * 4, g: 0, life: .55, max: .55, ch: rnd() < .5 ? "^" : "'", c0: [255, 220, 120], c1: [200, 40, 10]}); return; }
+  if (a === "ember") particles.push({x: x + (rnd() - .5) * 3, y, z: 1 + rnd() * 4, vx: (rnd() - .5) * 2, vy: 0, vz: 4 + rnd() * 3, g: 0, life: .5, max: .5, ch: rnd() < .5 ? "'" : ".", c0: [255, 190, 90], c1: [180, 40, 10]});
+  else if (a === "arcane") { const t = rnd() * 6.283; particles.push({x: x + Math.cos(t) * 3, y: y + Math.sin(t) * 1.4, z: 3 + rnd() * 3, vx: -Math.sin(t) * 4, vy: Math.cos(t) * 2, vz: .5, g: 0, life: .6, max: .6, ch: rnd() < .5 ? "*" : "·", c0: [220, 190, 255], c1: [100, 60, 220]}); }
+  else if (a === "smoke") particles.push({x: x + (rnd() - .5) * 4, y: y + .3, z: .2, vx: (rnd() - .5) * 3, vy: 0, vz: .8 + rnd(), g: 0, life: .9, max: .9, ch: "~", c0: [110, 120, 125], c1: [20, 24, 28]});
+}
+
 /* ============================== knight sprite ============================== */
 /* AI-rendered knight frames: 8-direction run, idle, sword combo. Cut out and packed by
    art/build_knight.py into art/knight-atlas.webp + .json, ASCII-fied at runtime */
@@ -704,13 +751,15 @@ const {stand: KSTAND, frames: KFR} = KATLAS_META;
 const KROWS = 22;                // text rows for a standing knight
 let KIMG = null, KN = {}, KNC = [];
 // every player wears their own cape colour: sprite sets are baked per palette index, on first use
-function bakeKnight() { if (!KIMG) return; KNC = []; KN = knSet(net.color); }
+function bakeKnight() { if (!KIMG) return; KNC = []; KN = knSet(net.color, myClass); }
 // Frames bake lazily, the first time each one is drawn, so a new player (new colour) or a zoom change
 // costs a few frames' work spread over time instead of one long stall (matters on phones).
-function knSet(ci) {
-  return KNC[ci] || (KNC[ci] = new Proxy({}, {get: (o, n) => o[n] || (KFR[n] && KIMG ? (o[n] = bakeFrame(ci, n)) : undefined)}));
+function knSet(ci, ki = 0) {
+  const key = ci * 16 + ki;
+  return KNC[key] || (KNC[key] = new Proxy({}, {get: (o, n) => o[n] || (KFR[n] && KIMG ? (o[n] = bakeFrame(ci, n, ki)) : undefined)}));
 }
-function bakeFrame(ci, name) {
+function bakeFrame(ci, name, ki = 0) {
+  const tint = (CLASSES[ki] || CLASSES[0]).tint;
   const fw = Math.max(2, Math.round(CW * .5)), fh = Math.max(3, Math.round(CH * .42));
   const ramp = " .:-=+*#%@";
   const bgk = fw < 4 ? .85 : .62, pal = PALETTE[ci] || PALETTE[0];
@@ -730,7 +779,8 @@ function bakeFrame(ci, name) {
         const i = (r * cols + cc) * 4, al = d[i + 3];
         if (al < 70) continue;
         let R = d[i] * .95, G = d[i + 1] * .94, B = Math.min(255, d[i + 2] * 1.04);
-        if (ci > 0 && R > 50 && R > G * 1.5 && R > B * 1.3) { const k = R / 170; R = pal[0] * k; G = pal[1] * k; B = pal[2] * k; } // recolour cape + plume
+        if (R > 50 && R > G * 1.5 && R > B * 1.3) { if (ci > 0) { const k = R / 170; R = pal[0] * k; G = pal[1] * k; B = pal[2] * k; } } // recolour cape + plume
+        else { R = Math.min(255, R * tint[0]); G = Math.min(255, G * tint[1]); B = Math.min(255, B * tint[2]); } // class armour tint
         const lum = (.3 * R + .59 * G + .11 * B) / 255;
         const X = (flip ? cols - 1 - cc : cc) * fw, Y = r * fh;
         g.globalAlpha = Math.min(1, al / 200);
@@ -803,7 +853,7 @@ function setLogOpen(open) {
 }
 {
   let saved = null; try { saved = localStorage.getItem("ak.logOpen"); } catch (e) {}
-  setLogOpen(saved !== null ? saved === "1" : innerHeight > 500);
+  setLogOpen(saved !== null ? saved === "1" : innerHeight > 500 && innerWidth > 640);
   $("logToggle").addEventListener("click", () => setLogOpen($("log").classList.contains("collapsed")));
 }
 const hotbar = $("hotbar");
@@ -899,6 +949,7 @@ addEventListener("keydown", e => {
   if (e.code === "Tab") { e.preventDefault(); if (net.api) { $("board").hidden = false; renderBoard(); } return; }
   if (e.code === "KeyE" && !e.repeat) { $("travel").hidden ? openTravel() : ($("travel").hidden = true); return; }
   if (e.code === "Escape") { $("travel").hidden = true; return; }
+  if (e.code === "KeyM" && !e.repeat) { toggleMute(); return; }
   if (KEYMAP[e.code]) { keys[KEYMAP[e.code]] = true; e.preventDefault(); }
   if (e.repeat) return;
   if (e.code === "Space" || e.code === "KeyJ" || e.code === "Digit1") { slashDir(player.dx, player.dy); startCharge("key", "slam"); e.preventDefault(); }
@@ -1027,7 +1078,7 @@ function slashDir(dx, dy) {
   }
   const base = Math.atan2(dy, dx), dirS = player.face;
   mv.fx(base, dirS, x0, y0, dx, dy);
-  netFx({k: "sl", c: player.combo, dx, dy});
+  netFx({k: "sl", c: player.combo, dx, dy}); sfx.slash(player.combo);
   // hit test: an arc in front (sweep, cleave), all around (whirlwind) or the lane he lunged through
   let landed = false;
   for (const d of targets()) {
@@ -1038,7 +1089,7 @@ function slashDir(dx, dy) {
       const ax = x0, ay = y0 * VS, bx = player.x + dx * mv.reach, by = player.y * VS + dy * mv.reach, px = d.x, py = d.y * VS;
       const t = clamp(((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2 || 1), 0, 1);
       hit = Math.hypot(px - ax - t * (bx - ax), py - ay - t * (by - ay)) < mv.width;
-    } else hit = dist < mv.reach && (mv.arc >= Math.PI || Math.acos(clamp((vx * dx + vy * dy) / (dist || 1), -1, 1)) < mv.arc);
+    } else hit = dist < mv.reach * C().reach && (mv.arc >= Math.PI || Math.acos(clamp((vx * dx + vy * dy) / (dist || 1), -1, 1)) < Math.min(Math.PI, mv.arc * C().arc));
     if (!hit) continue;
     landed = true; damage(d, mv.dmg, "phys"); d.jit = .3; meleeMana(d);
     const away = Math.atan2(vy, vx);
@@ -1071,7 +1122,7 @@ function swoosh(base, from, span, r, z, delay, o = player) {
    Lunge: dashes forward through a lane, hitting everything in it. Whirlwind: full spin, hits all around. */
 const MELEE = [
   {name: "Sweep", dmg: 55, reach: 7.5, arc: 1.35, step: 2.4, cd: .32, stop: .07, shake: .24, ring: 6,
-    fx: (base, s) => swoosh(base, -1.25 * s, 2.5 * s, 6, 3.6, .09)},
+    fx: (base, s) => swoosh(base, -1.25 * s * C().arc, 2.5 * s * C().arc, 6 * C().reach, 3.6, .09)},
   {name: "Cleave", dmg: 78, reach: 10, arc: .55, step: 1.8, cd: .38, stop: .09, shake: .32, ring: 6,
     fx: (base, s, x0, y0, dx, dy) => {
       for (let k = 0; k < 16; k++) { const u = k / 15, r = 2 + u * 8; // a vertical blade line slamming down ahead
@@ -1141,11 +1192,12 @@ function castDir(dx, dy, pow = 0) {
   const aimT = seekTarget(player.x, player.y, dx, dy, .3, 70);
   if (aimT) { const ax = aimT.x - player.x, ay = (aimT.y - player.y) * VS, al = Math.hypot(ax, ay); dx = dx * .4 + ax / al * .6; dy = dy * .4 + ay / al * .6; const nl = Math.hypot(dx, dy); dx /= nl; dy /= nl; }
   const proj = {x: player.x + dx * 2.5, y: player.y + dy * 1.2 / VS, z: 3.2, vx: dx * sp, vy: dy * sp / VS, life: .9 + pow * .4, ph: rnd() * 6, pow, dmg: cost * FIRE_DMG_PER_MP};
-  projectiles.push({...proj, own: true, owner: selfId}); netFx({k: "fire", p: proj});
+  projectiles.push({...proj, own: true, owner: selfId}); netFx({k: "fire", p: proj}); sfx.fireCast(pow);
   for (let k = 0; k < 14 + pow * 40; k++) particles.push({x: player.x + dx * 2, y: player.y, z: 3, vx: dx * (10 + pow * 14) + (rnd() - .5) * 10, vy: (dy * (10 + pow * 14) + (rnd() - .5) * 10) / VS, vz: (rnd() - .5) * 5, g: 0, life: .3 + pow * .2, max: .5, ch: "*", c0: [255, 230, 160], c1: [255, 110, 30]});
   if (pow > 0) { shake = Math.max(shake, .15 + pow * .3); tempLights.push({x: player.x, y: player.y, r: 26 + pow * 20, i: 1.6 + pow * 2, c: [1, .55, .2], life: .25, max: .25}); }
 }
 function explode(x, y, pow = 0, dmg = ORB_COST * FIRE_DMG_PER_MP, own = true) {
+  sfx.explode(clamp(dmg / 270, .2, 1.6), ...heard(x, y));
   // size everything off the damage carried, so a full-mana fireball reads as a catastrophe
   const big = clamp(dmg / 270, .2, 2.2);
   tempLights.push({x, y, r: 34 + big * 40, i: 3 + big * 3, c: [1, .55, .18], life: .6 + big * .5, max: .6 + big * .5});
@@ -1186,17 +1238,18 @@ function hitDummies(x, y, r, fn) { for (const d of targets()) { const dist = gdi
 const DMG_COL = {phys: [236, 240, 248], blade: [190, 220, 255], fire: [255, 150, 60], burn: [255, 196, 96], shock: [150, 212, 255]};
 function damage(d, amt, kind) {
   if (d.dead) return;
-  amt *= 1 + player.kb.dmg; // kill bonus
+  amt *= (1 + player.kb.dmg) * (kind === "phys" ? C().melee : C().spell); // kill bonus x class strength
   const crit = kind !== "burn" && rnd() < .15;
   amt = Math.max(1, Math.round(amt * (crit ? 1.7 : 1) * (.9 + rnd() * .2)));
   if (d.buf) { // another player's knight: show the number, tell them; they apply it (and may dodge or block)
     if (!isEnemy(d.id) || d.prot) return;
     floaters.push({x: d.x + (rnd() - .5) * 3, y: d.y - 7, text: crit ? amt + "!" : "" + amt, c: DMG_COL[kind], big: (crit ? 1.4 : 1) * (1 + Math.min(1.2, amt / 160)), life: 1.2, max: 1.2, vx: (rnd() - .5) * 5});
-    if (kind !== "burn") hitstop = Math.max(hitstop, crit ? .09 : .05);
+    if (kind !== "burn") { hitstop = Math.max(hitstop, crit ? .09 : .05); sfx.hit(crit ? 1 : .4); }
     net.api.send("hit", {dmg: amt, kind, x: player.x, y: player.y}, d.id);
     return;
   }
   if (net.api && !net.host) net.api.send("dh", {i: dummies.indexOf(d), dmg: amt, kind}); // the host owns the dummies
+  if (kind !== "burn") sfx.hit(crit ? 1 : .3, .7);
   d.hp -= amt; d.flash = .12; d.jit = Math.max(d.jit, kind === "burn" ? .05 : .2);
   if (kind !== "burn") hitstop = Math.max(hitstop, crit ? .09 : .05); // freeze a few frames so hits land with weight
   const size = (crit ? 1.4 : kind === "burn" ? .8 : 1) * (1 + Math.min(1.2, amt / 160)); // big hits get big numbers
@@ -1267,7 +1320,7 @@ function castBolt(pow = 0) {
   const L = Math.max(1, Math.hypot(tx - hx, (ty - hy) * VS)), sp = 150;
   const spk = {x: hx, y: hy, vx: (tx - hx) / L * sp, vy: (ty - hy) * VS / L * sp / VS, left: L / sp + .02, t: 0, pow,
     dmg: cost * BOLT_DMG_PER_MP, rad: 5 + pow * 3, chainN: 2 + Math.round(pow * 3), extra: Math.round(pow * 3)};
-  sparks.push({...spk, own: true, owner: selfId}); netFx({k: "spark", s: spk});
+  sparks.push({...spk, own: true, owner: selfId}); netFx({k: "spark", s: spk}); sfx.zap();
   tempLights.push({x: hx, y: hy, r: 18, i: 1.6, c: [.6, .8, 1], life: .15, max: .15});
 }
 // where the spark lands: the main sky strike, plus extra strikes around it for a charged cast
@@ -1296,6 +1349,7 @@ function updateSparks(dt) {
   }
 }
 function strikeBolt(b, pulse) {
+  if (!pulse) { const [v, pan] = heard(b.x, b.y, 140); sfx.thunder(v, pan, Math.min(.6, gdist(b.x, b.y, player.x, player.y) / 220)); } // sound lags light at a distance
   shakeAt(b.x, b.y, pulse ? .2 : .55);
   const n = pulse ? 10 : 34;
   for (let k = 0; k < n; k++) {
@@ -1481,7 +1535,7 @@ function startRoll() {
   if (mouseWalk.on) { const d = aimAt(mouseWalk.cx, mouseWalk.cy); ix += d[0]; iy += d[1]; }
   let l = Math.hypot(ix, iy); if (l < .1) { ix = player.dx; iy = player.dy; l = Math.hypot(ix, iy) || 1; }
   ix /= l; iy /= l;
-  player.roll = {t: 0, dx: ix, dy: iy}; player.rollCd = ROLL_CD + ROLL_TIME;
+  player.roll = {t: 0, dx: ix, dy: iy}; player.rollCd = ROLL_CD * C().dashCd + ROLL_TIME; sfx.dash();
   player.dx = ix; player.dy = iy; if (Math.abs(ix) > .15) player.face = ix > 0 ? 1 : -1;
   charge.on = false; player.shield = false;
   for (let k = 0; k < 12; k++) particles.push({x: player.x + (rnd() - .5) * 3, y: player.y, z: .3, vx: -ix * 8 + (rnd() - .5) * 8, vy: (rnd() - .5) * 3, vz: 2 + rnd() * 3, g: -8, life: .6, max: .6, ch: [".", ",", "~"][k % 3], c0: [160, 150, 128], c1: [40, 38, 34]});
@@ -1530,7 +1584,7 @@ function castBlades(pow = 0) {
       launch: .75 + i * (n > 6 ? .08 : .13), tilt: (rnd() - .5) * .5, life: 0,
     });
   }
-  for (const b of sent) blades.push({...b, own: true, who: player});
+  for (const b of sent) blades.push({...b, own: true, who: player}); sfx.bladeSummon();
   netFx({k: "blades", b: sent});
   tempLights.push({x: player.x, y: player.y, r: 30, i: 2, c: [.6, .8, 1], life: .5, max: .5});
   for (let k = 0; k < 30; k++) { const a = rnd() * 6.283; particles.push({x: player.x + Math.cos(a) * 4, y: player.y + Math.sin(a) * 2, z: .5, vx: 0, vy: 0, vz: 6 + rnd() * 8, g: 0, life: .6, max: .6, ch: "|", c0: [220, 240, 255], c1: [80, 130, 255]}); }
@@ -1560,7 +1614,7 @@ function updateBlades(dt) {
       if (k >= 1) { // impact
         b.phase = "stuck"; b.life = 2.4; b.z = 0;
         if (b.own) { hitDummies(b.x, b.y, 4.5 * b.size, d => damage(d, b.dmg, "blade")); hitstop = Math.max(hitstop, .05); }
-        shakeAt(b.x, b.y, .35);
+        shakeAt(b.x, b.y, .35); sfx.bladeImpact(...heard(b.x, b.y));
         rings.push({x: b.x, y: b.y, r: 1, r1: 9, t: 0, life: .35, c: [170, 210, 255]});
         tempLights.push({x: b.x, y: b.y, r: 26, i: 2.4, c: [.6, .8, 1], life: .35, max: .35});
         for (let k2 = 0; k2 < 26; k2++) { const a = rnd() * 6.283, s = 6 + rnd() * 18; particles.push({x: b.x, y: b.y, z: .4, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 5 + rnd() * 10, g: -30, life: .6 + rnd() * .5, max: 1.1, ch: [".", ",", ":", "'"][k2 % 4], c0: [170, 150, 120], c1: [60, 50, 40]}); }
@@ -1650,6 +1704,7 @@ function doSlam(pow) {
   slamCd = SLAM_CD; player.slam = {t: 0, pow, hit: false, dx: player.dx, dy: player.dy};
 }
 function slamFx(x, y, pow) { // the landing: shockwave rings, flying dirt, a cracked crater
+  sfx.slam(pow, ...heard(x, y));
   const R = 7 + pow * 6;
   shakeAt(x, y, .5 + pow * .5);
   rings.push({x, y, r: 2, r1: R * 1.6, t: 0, life: .4, c: [240, 220, 180]});
@@ -1754,7 +1809,7 @@ function update(dt) {
   if (player.slam || (charge.on && charge.kind === "slam" && charge.t > CHARGE_MIN)) len = 0; // rooted while slamming / winding up
   player.moving = len > .12;
   if (player.moving) {
-    const sp = (keys.run || Math.hypot(stick.x, stick.y) > .95 ? 56 : 42) * len * (1 - player.shieldUp * .55); // shield up = slow guarded walk
+    const sp = (keys.run || Math.hypot(stick.x, stick.y) > .95 ? 56 : 42) * len * (1 - player.shieldUp * .55) * C().speed; // shield up = slow guarded walk
     const nx = ix / len, ny = iy / len;
     player.dx = nx; player.dy = ny;
     if (Math.abs(nx) > .15) player.face = nx > 0 ? 1 : -1;
@@ -1773,7 +1828,7 @@ function update(dt) {
   player.atk = Math.max(0, player.atk - dt); player.atkCd = Math.max(0, player.atkCd - dt); player.recoil = Math.max(0, player.recoil - dt);
   for (let i = ghosts.length - 1; i >= 0; i--) { ghosts[i].life -= dt; if (ghosts[i].life <= 0) ghosts.splice(i, 1); }
   // mana flows back faster while you keep moving: +4/s walking, +7/s running, on top of the base +5/s
-  player.mp = Math.min(player.mmp, player.mp + dt * (5 + (player.moving ? (player.running ? 7 : 4) : 0)));
+  player.mp = Math.min(player.mmp, player.mp + dt * (5 + (player.moving ? (player.running ? 7 : 4) : 0)) * C().regen);
   cd = Math.max(0, cd - dt);
 
   // camera
@@ -1832,7 +1887,7 @@ function update(dt) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.vz += p.g * dt;
     if (p.z < 0) { p.z = 0; p.vz *= -.3; p.vx *= .6; p.vy *= .6; }
   }
-  const PCAP = isTouch ? 420 : 1400; // phones draw every particle as text: keep the count sane
+  const PCAP = (isTouch ? 420 : 1400) * QUALITY[quality].fx; // phones draw every particle: keep the count sane
   if (particles.length > PCAP) particles.splice(0, particles.length - PCAP);
 
   // wisps + fireflies
@@ -1871,10 +1926,28 @@ function glowSprite(rgb) {
   return glowSprites[key] = c;
 }
 const sx = wx => wx * CW - TLx, sy = wy => wy * CH - TLy;
+const glyphCache = new Map(); let glyphFont = "";
+function glyphImg(ch, r, g, b) {
+  if (glyphFont !== FONT) { glyphCache.clear(); glyphFont = FONT; } // zoom / resize changed the cell size
+  const q = v => clamp(v | 0, 0, 255) >> 4; // 16 shades per channel keeps the cache small
+  const key = ch + (q(r) << 8 | q(g) << 4 | q(b));
+  let c = glyphCache.get(key);
+  if (!c) {
+    if (glyphCache.size > 3000) glyphCache.clear();
+    const w = Math.ceil(CW * 2), h = Math.ceil(CH * 1.5);
+    c = document.createElement("canvas"); c.width = w; c.height = h;
+    const x = c.getContext("2d");
+    x.font = FONT; x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillStyle = `rgb(${q(r) * 17},${q(g) * 17},${q(b) * 17})`; x.fillText(ch, w / 2, h / 2);
+    glyphCache.set(key, c);
+  }
+  return c;
+}
 function glyph(ch, wx, wy, r, g, b, a = 1) {
   const X = sx(wx), Y = sy(wy);
   if (X < -CW || Y < -CH || X > Wpx + CW || Y > Hpx + CH) return;
-  octx.globalAlpha = a; octx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`; octx.fillText(ch, X, Y);
+  const c = glyphImg(ch, r, g, b);
+  octx.globalAlpha = a; octx.drawImage(c, (X - c.width / 2) | 0, (Y - c.height / 2) | 0);
 }
 function glow(wx, wy, rgb, sizeCells, a) {
   const s = sizeCells * CW, X = sx(wx), Y = sy(wy);
@@ -1965,11 +2038,11 @@ function drawKnight() {
   octx.globalCompositeOperation = "lighter";
   for (const g of ghosts) { octx.globalAlpha = g.life / .22 * .28; if (KN[g.fr]) drawSprite(KN[g.fr], g.flip, g.x, g.y, 0, 1, 1, CH * .3); }
   octx.globalCompositeOperation = "source-over";
-  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, isProtected());
+  drawKnightAt(player.x, player.y, p, net.color, net.name, net.team, player.face, player.dead ? .5 : 1, isProtected(), myClass);
 }
 // any knight, local or remote: shadow, team ring, sprite, visor glow, name tag
-function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot) {
-  const set = knSet(ci), k = set[p.fr];
+function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot, ki = 0) {
+  const set = knSet(ci, ki), k = set[p.fr], cls = CLASSES[ki] || CLASSES[0];
   if (!k) return;
   const occ = occluded(x, y), lift = p.lift * CH;
   octx.globalAlpha = (occ ? .25 : .55) * alpha; octx.fillStyle = "#000";
@@ -1982,11 +2055,12 @@ function drawKnightAt(x, y, p, ci, name, team, face, alpha, prot) {
   octx.globalAlpha = (occ ? .42 : 1) * alpha * (prot ? .55 + .3 * Math.sin(time * 18) : 1);
   drawSprite(k, p.flip, x, y, p.tilt, p.sX, p.sY, lift, p.ss === null ? null : {s: p.ss, side: p.side});
   octx.globalCompositeOperation = "lighter";
-  glow(x + (face > 0 ? .8 : -.8), y - (k.h + lift) / CH * .82, [120, 220, 255], 3.4, (.45 + .15 * Math.sin(time * 3)) * alpha);
+  glow(x + (face > 0 ? .8 : -.8), y - (k.h + lift) / CH * .82, cls.visor, 3.4, (.45 + .15 * Math.sin(time * 3)) * alpha);
+  classAura(x, y, ki, alpha);
   octx.globalCompositeOperation = "source-over";
   octx.font = `600 ${Math.round(10 * dpr)}px "IBM Plex Mono", ui-monospace, monospace`;
   octx.globalAlpha = .85 * alpha; octx.fillStyle = net.mode === "tdm" ? TEAM_COL[team] : `rgb(${PALETTE[ci].map(v => Math.min(255, v + 70)).join(",")})`;
-  octx.fillText(name, sx(x), sy(y) - k.h - lift - 2 * dpr);
+  octx.fillText(`${cls.icon} ${name}`, sx(x), sy(y) - k.h - lift - 2 * dpr);
   octx.font = FONT;
 }
 function render() {
@@ -2033,7 +2107,7 @@ function render() {
   octx.globalCompositeOperation = "source-over";
   // dummies and knights, back to front
   const ents = dummies.map(d => ({y: d.y, f: () => drawDummy(d)}));
-  for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { drawKnightAt(p.x, p.y, p.p, colorOf(p.id), p.name, teamOf(p.id), p.face, p.dead ? .5 : 1, p.prot); drawRemoteExtras(p); }});
+  for (const p of livePeers()) if (p.p) ents.push({y: p.y, f: () => { drawKnightAt(p.x, p.y, p.p, colorOf(p.id), p.name, teamOf(p.id), p.face, p.dead ? .5 : 1, p.prot, p.cls || 0); drawRemoteExtras(p); }});
   ents.push({y: player.y, f: drawKnight});
   ents.sort((a, b) => a.y - b.y);
   drawBlades(true);
@@ -2066,6 +2140,13 @@ function render() {
   octx.globalCompositeOperation = "source-over"; octx.globalAlpha = 1;
   drawFloaters();
   drawPointers();
+  drawHitMarks();
+  if (player.dead) { // respawn countdown
+    octx.globalAlpha = .9; octx.textAlign = "center"; octx.textBaseline = "middle";
+    octx.font = `700 ${Math.round(26 * dpr)}px "Cinzel", Georgia, serif`; octx.fillStyle = "#f0d8c8";
+    octx.fillText(`Respawning in ${Math.max(1, Math.ceil(player.dead))}`, Wpx / 2, Hpx * .62);
+    octx.font = FONT;
+  }
   octx.globalAlpha = 1;
 }
 
@@ -2073,7 +2154,16 @@ function render() {
 // Stand by a waystone and press E (or tap Travel) to pick another; a short channel, then you're there.
 const TP_CHANNEL = .6;
 let nearWay = null;
+let ambT = 0;
+function updateSound(dt) {
+  audio.chargeHum(charge.on && charge.t > CHARGE_MIN ? chargePower() : -1);
+  ambT -= dt; if (ambT > 0) return; ambT = .25;
+  const water = clamp(1 - Math.min(riverDist(player.x, player.y), lakeDist(player.x, player.y)) / 30, 0, 1);
+  let fire = 0; for (const l of staticLights) if (l.kind === "fire") fire = Math.max(fire, clamp(1 - gdist(l.x, l.y, player.x, player.y) / 40, 0, 1));
+  audio.ambience(water, fire);
+}
 function updateTravel(dt) {
+  updateSound(dt);
   nearWay = null;
   if (!player.dead) for (const w of WAYSTONES) if (gdist(player.x, player.y, w.x, w.y) < 7) { nearWay = w; break; }
   if (nearWay && !player.dead) { // standing in a waystone's light pours mana back in
@@ -2093,7 +2183,7 @@ function updateTravel(dt) {
     const from = {x: player.x, y: player.y}, w = tp.dest;
     player.tp = null;
     player.x = w.x + (rnd() - .5) * 4; player.y = w.y + 3; cam.x = player.x; cam.y = player.y - 3;
-    tpBurst(from.x, from.y); tpBurst(player.x, player.y);
+    tpBurst(from.x, from.y); tpBurst(player.x, player.y); sfx.teleport();
     netFx({k: "tp", a: [from.x, from.y], b: [player.x, player.y]});
     banner(w.name, "waystone");
   }
@@ -2223,6 +2313,8 @@ function bodiesFor(owner) {
   for (const p of livePeers()) if (!p.dead && p.id !== owner && isEnemyOf(owner, p.id)) b.push(p);
   return b;
 }
+// how loud and where (stereo) a sound at x,y should be for this player: fades out over `range`
+function heard(x, y, range = 90) { return [clamp(1 - gdist(x, y, player.x, player.y) / range, 0, 1), clamp((x - player.x) / 40, -1, 1)]; }
 function netFx(f) { if (net.api) net.api.send("fx", f); }
 function shakeAt(x, y, amt) { shake = Math.max(shake, amt * clamp(1.2 - gdist(x, y, player.x, player.y) / 70, 0, 1)); }
 
@@ -2252,17 +2344,18 @@ function electHost() {
 async function joinRealm(want) {
   net.want = want; net.mode = want;
   $("status").querySelector(".nm").textContent = net.name;
+  applyClass(myClass);
   net.host = false; net.joinT = performance.now(); net.connecting = true;
   respawn();
   const turn = await fetchTurn(); // relay credentials for networks that block direct connections
   net.turnOk = turn.iceServers.some(s => [].concat(s.urls).some(u => String(u).startsWith("turn")));
   net.joinT = performance.now(); net.connecting = false;
-  net.api = connect(() => ({name: net.name, rank: net.rank}), {
+  net.api = connect(() => ({name: net.name, rank: net.rank, cls: myClass}), {
     hello(d, id) {
       let p = net.peers.get(id);
       if (!p) { p = {id, buf: [], x: 0, y: 0, hp: 120, mhp: 120, dead: false, prot: false, face: 1, p: null}; net.peers.set(id, p); }
       if (!p.hello) addLog(`${d.name} entered the realm.`, "General", "sys");
-      Object.assign(p, {hello: true, name: String(d.name).slice(0, 16), rank: +d.rank, heard: performance.now()});
+      Object.assign(p, {hello: true, name: String(d.name).slice(0, 16), rank: +d.rank, cls: clamp(d.cls | 0, 0, CLASSES.length - 1), heard: performance.now()});
     },
     leave(id) { const p = net.peers.get(id); if (p && p.hello) addLog(`${p.name} left the realm.`, "General", "sys"); net.peers.delete(id); },
     st(a, id) {
@@ -2294,11 +2387,13 @@ function setRealmMode(m) { // host only: everyone follows into the new mode with
 // replay someone else's attack as visuals (their client decides what it hit)
 function onFx(f, id) {
   const p = net.peers.get(id); if (!p || !p.buf.length) return;
+  const [v, pan] = heard(p.x, p.y);
+  if (f.k === "fire") sfx.fireCast(f.p.pow, v, pan); else if (f.k === "spark") sfx.zap(v, pan); else if (f.k === "blades") sfx.bladeSummon(v); else if (f.k === "sl") sfx.slash(f.c, v, pan);
   if (f.k === "fire") projectiles.push({...f.p, own: false, owner: id});
   else if (f.k === "spark") sparks.push({...f.s, t: 0, own: false, owner: id});
   else if (f.k === "blades") for (const b of f.b) blades.push({...b, own: false, who: p});
   else if (f.k === "slam") slamFx(f.x, f.y, f.pow);
-  else if (f.k === "tp") { tpBurst(f.a[0], f.a[1]); tpBurst(f.b[0], f.b[1]); }
+  else if (f.k === "tp") { tpBurst(f.a[0], f.a[1]); tpBurst(f.b[0], f.b[1]); sfx.teleport(...heard(f.b[0], f.b[1])); }
   else if (f.k === "sl") {
     const base = Math.atan2(f.dy, f.dx), s = p.face || 1;
     if (f.c === 3) { swoosh(base, 0, 6.283, 6.5, 3.4, .14, p); swoosh(base, Math.PI, 6.283, 5, 2.2, .14, p); }
@@ -2314,12 +2409,15 @@ function applyHit(dmg, kind, by, ax, ay) {
   if (player.shieldUp > .5 && ax !== undefined && Math.sign(ax - player.x || player.face) === player.face) { dmg *= .2; blocked = true; } // the shield faces where he faces
   dmg = Math.max(1, Math.round(dmg));
   player.hp = Math.max(0, player.hp - dmg); player.hurt = blocked ? 0 : .25; player.lastHurt = time;
+  if (ax !== undefined && !blocked) hitMarks.push({a: Math.atan2((ay - player.y) * VS, ax - player.x), t: 0, k: Math.min(1, .35 + dmg / 80)});
+  if (blocked) sfx.bladeImpact(.7); else sfx.hurt();
   floaters.push({x: player.x + (rnd() - .5) * 2, y: player.y - 7, text: (blocked ? "BLOCK " : "-") + dmg, c: blocked ? [255, 226, 160] : [255, 92, 80], big: 1 + Math.min(1, dmg / 120), life: 1.1, max: 1.1, vx: (rnd() - .5) * 4});
   shake = Math.max(shake, blocked ? .15 : .3); hitstop = Math.max(hitstop, .05);
   if (!blocked) screenFlashAdd(Math.min(.3, .08 + dmg / 400), "#ff2a20");
   if (player.hp <= 0) die(by);
 }
 function die(by) {
+  sfx.death();
   player.dead = DEATH_TIME; player.hp = 0; charge.on = false; player.shield = false; player.roll = null; player.slam = null;
   banner("You were slain", `by ${nameOf(by)}`);
   for (let k = 0; k < 50; k++) { const a = rnd() * 6.283, s = 4 + rnd() * 14; particles.push({x: player.x, y: player.y, z: 2 + rnd() * 4, vx: Math.cos(a) * s, vy: Math.sin(a) * s / VS, vz: 4 + rnd() * 8, g: -20, life: .8 + rnd() * .6, max: 1.4, ch: ["*", "'", ".", "+"][k % 4], c0: [255, 140, 120], c1: [90, 20, 20]}); }
@@ -2344,6 +2442,7 @@ function spawnPoint() { // somewhere open in the arena, preferring spots far fro
 // max HP never grows, so a player on a streak can always be brought down; damage and mana are what scale
 const KILL_DMG = .06, KILL_DMG_CAP = .6, KILL_HP = 0, KILL_HP_CAP = 0, KILL_MP = 12, KILL_MP_REFILL = 40, KILL_HEAL = .15;
 function killBonus() {
+  sfx.kill();
   const kb = player.kb;
   const hpGain = Math.max(0, Math.min(KILL_HP, KILL_HP_CAP - kb.hp));
   kb.kills++; kb.dmg = Math.min(KILL_DMG_CAP, kb.dmg + KILL_DMG); kb.hp += hpGain; kb.mp += KILL_MP;
@@ -2367,10 +2466,26 @@ function respawn(why = "join") {
   player.prot = performance.now() + (net.mode === "practice" ? 0 : SPAWN_PROT * 1000); // wall clock: a paused tab doesn't stay invulnerable
 }
 // a death: everyone logs it, the host keeps score
+const STREAKS = {2: "Double Kill", 3: "Killing Spree", 5: "Rampage", 7: "Unstoppable", 10: "Godlike"};
+const clsOf = id => id === selfId ? myClass : ((net.peers.get(id) || {}).cls || 0);
+function feed(by, victim) { // compact kill feed under the minimap; entries fade out after a few seconds
+  const el = document.createElement("div"); el.className = "kf" + (by === selfId ? " me" : victim === selfId ? " dead" : "");
+  const who = id => { const s = document.createElement("span"); s.textContent = `${CLASSES[clsOf(id)].icon} ${nameOf(id)}`; return s; };
+  if (by && by !== victim) { el.append(who(by)); el.append(" ⟶ "); }
+  el.append(who(victim));
+  const box = $("killfeed"); box.prepend(el); while (box.children.length > 5) box.lastChild.remove();
+  setTimeout(() => el.classList.add("fade"), 5000); setTimeout(() => el.remove(), 6000);
+}
 function onKill(by, victim) {
   const msg = by === victim || !by ? `${nameOf(victim)} fell.` : `${nameOf(by)} slew ${nameOf(victim)}.`;
   addLog(msg, "General", by === selfId ? "gold" : victim === selfId ? "warn" : "");
-  if (by === selfId && victim !== selfId) { gainXP(25); killBonus(); banner("Enemy slain", nameOf(victim)); }
+  feed(by, victim);
+  if (by === selfId && victim !== selfId) {
+    gainXP(25); killBonus(); player.streak = (player.streak || 0) + 1;
+    const s = STREAKS[player.streak];
+    if (s) { banner(s, `${player.streak} kills without dying`); screenFlashAdd(.12, "#ffe2a0"); } else banner("Enemy slain", nameOf(victim));
+  }
+  if (victim === selfId) player.streak = 0;
   if (!net.host || net.hs.winner) return;
   const sc = net.hs.score;
   (sc[victim] ||= [0, 0])[1]++;
@@ -2415,7 +2530,7 @@ function applySnap(s, id) {
 // react to colours/teams/round changes, from a snapshot or from my own host bookkeeping
 function onSharedState(prevRound, prevWinner, sameHost = true) {
   const hs = net.hs, c = hs.colors[selfId] ?? net.color, t = hs.teams[selfId] ?? net.team;
-  if (c !== net.color) { net.color = c; KN = knSet(c); }
+  if (c !== net.color) { net.color = c; KN = knSet(c, myClass); }
   if (hs.mode && hs.mode !== net.mode) {
     net.mode = hs.mode; net.placed = false;
     addLog(`The host chose ${MODES[hs.mode].name}.`, "System", "gold");
@@ -2477,6 +2592,17 @@ function interpolatePeers() {
     Object.assign(p, {p: c.p, hp: c.hp, mhp: c.mhp, dead: c.dead, face: c.face, ck: c.ck, cp: c.cp, prot: c.prot, sh: c.sh});
   }
 }
+// a red glow on the screen edge facing whoever just hit you, fading over ~0.7 s
+const hitMarks = [];
+function drawHitMarks() {
+  for (let i = hitMarks.length - 1; i >= 0; i--) {
+    const h = hitMarks[i]; h.t += 1 / 60; if (h.t > .7) { hitMarks.splice(i, 1); continue; }
+    const cx = Wpx / 2, cy = Hpx / 2, r = Math.min(Wpx, Hpx) * .46, x = cx + Math.cos(h.a) * r, y = cy + Math.sin(h.a) * r;
+    const g = octx.createRadialGradient(x, y, 0, x, y, r * .55);
+    g.addColorStop(0, `rgba(255,40,30,${.55 * h.k * (1 - h.t / .7)})`); g.addColorStop(1, "rgba(255,40,30,0)");
+    octx.globalAlpha = 1; octx.fillStyle = g; octx.fillRect(x - r * .55, y - r * .55, r * 1.1, r * 1.1);
+  }
+}
 // arrows at the screen edge pointing at knights you can't see (enemies bold, allies faint)
 function drawPointers() {
   if (!net.api) return;
@@ -2504,7 +2630,7 @@ function drawPointers() {
 }
 function drawRemoteExtras(p) { // their HP bar (enemies) and any charge gathering in their hand
   if (p.dead) return;
-  const k = knSet(colorOf(p.id))[p.p.fr]; if (!k) return;
+  const k = knSet(colorOf(p.id), p.cls || 0)[p.p.fr]; if (!k) return;
   if (isEnemy(p.id) && p.hp < p.mhp) {
     const X = sx(p.x) - 4 * CW, Y = sy(p.y) - k.h - p.p.lift * CH - 14 * dpr, w = 8 * CW, h = Math.max(2, 3 * dpr);
     octx.globalAlpha = .85; octx.fillStyle = "#0b0b0f"; octx.fillRect(X - dpr, Y - dpr, w + 2 * dpr, h + 2 * dpr);
@@ -2563,6 +2689,24 @@ function renderBoard() {
 
 /* ============================== loop ============================== */
 let last = performance.now(), fpsAcc = 0, fpsN = 0, msAcc = 0, miniT = 0;
+/* Adaptive quality: if a device keeps running under ~40 FPS, step down the render resolution and the amount
+   of effects (never back up during a session, so it doesn't flicker between levels). */
+const QUALITY = [{dpr: 2, fx: 1}, {dpr: 1.5, fx: .7}, {dpr: 1.15, fx: .5}, {dpr: .9, fx: .35}];
+let quality = 0; try { quality = clamp(+sessionStorage.getItem("gk.q") || 0, 0, QUALITY.length - 1); } catch (e) {}
+let qT = 0, qFrames = 0, qGrace = 4;
+function adaptQuality(dt) {
+  if (document.hidden || !$("lobby").hidden) return;
+  if (qGrace > 0) { qGrace -= dt; return; } // ignore the first seconds (loading, baking)
+  qT += dt; qFrames++;
+  if (qT < 3) return;
+  const fps = qFrames / qT; qT = 0; qFrames = 0;
+  if (fps < 40 && quality < QUALITY.length - 1) {
+    quality++; qGrace = 3;
+    try { sessionStorage.setItem("gk.q", quality); } catch (e) {}
+    console.info(`[gizmo-knight] ${Math.round(fps)} FPS: quality step ${quality}`);
+    resize();
+  }
+}
 let frameErrors = 0, netLast = performance.now();
 // Networking runs on its own timer, not the draw loop: browsers pause drawing in hidden tabs (and phones when you
 // switch apps), which used to freeze a hosting player's whole match. Timers keep going (about once a second there).
@@ -2584,6 +2728,7 @@ function frame(now) {
     updateHUD();
   } catch (e) { if (frameErrors++ < 5) console.error("[gizmo-knight] frame error", e); }
   msAcc += performance.now() - t0; fpsAcc += dt; fpsN++;
+  adaptQuality(dt);
   if (fpsAcc > .5) { $("fps").textContent = `FPS ${Math.round(fpsN / fpsAcc)} · frame ${(msAcc / fpsN).toFixed(1)} ms`; fpsAcc = msAcc = 0; fpsN = 0; }
 }
 // phones drop the WebGL context when backgrounded or under memory pressure; recover instead of freezing
@@ -2616,11 +2761,22 @@ async function start() {
 function showLobby() {
   const lb = $("lobby"), inp = $("pname");
   lb.hidden = false; inp.value = net.name;
+  // class cards: name, one line, and bars comparing the stats that matter
+  const pick = $("classPick"), bar = (label, v, max) => `<span>${label}</span><i><s style="width:${Math.round(Math.min(1, v / max) * 100)}%"></s></i>`;
+  pick.textContent = "";
+  CLASSES.forEach((c, i) => {
+    const b = document.createElement("button");
+    b.setAttribute("role", "radio"); b.setAttribute("aria-checked", i === myClass);
+    b.innerHTML = `<b><span class="ic">${c.icon}</span>${c.name}</b><span>${c.desc}</span><span class="stats">${bar("HP", c.hp, 140)}${bar("MP", c.mp, 100)}${bar("Speed", c.speed - .7, .45)}${bar("Melee", c.melee, 1.3)}${bar("Magic", c.spell, 1.3)}</span>`;
+    b.addEventListener("click", () => { myClass = i; pick.querySelectorAll("button").forEach((x, j) => x.setAttribute("aria-checked", j === i)); });
+    pick.appendChild(b);
+  });
   lb.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => {
     const nm = inp.value.trim().replace(/\s+/g, " ").slice(0, 16);
     if (nm) net.name = nm;
     try { localStorage.setItem("gk.name", net.name); } catch (e) {}
     lb.hidden = true;
+    audio.start();
     joinRealm(b.dataset.mode);
   }, {once: true}));
 }
@@ -2641,6 +2797,10 @@ $("mapToggle").addEventListener("click", e => {
   setPanel($("mapbox"), $("mapToggle"), open, "gk.mapOpen", MAP_L); $("mapToggle").textContent = open ? "–" : "+";
   if (open) { const m = $("mini"); m.width = Math.round(m.clientWidth * dpr); m.height = Math.round(m.clientHeight * dpr); } // was 0x0 while hidden
 });
+function toggleMute() { audio.start(); audio.setMuted(!audio.isMuted()); syncMuteBtn(); }
+function syncMuteBtn() { const m = audio.isMuted(), b = $("muteBtn"); b.textContent = m ? "♪̸" : "♪"; b.classList.toggle("off", m); b.setAttribute("aria-label", m ? "Unmute sound" : "Mute sound"); }
+$("muteBtn").addEventListener("click", e => { e.stopPropagation(); toggleMute(); });
+syncMuteBtn();
 $("boardBtn").addEventListener("click", e => { e.stopPropagation(); const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 $("leaveBtn").addEventListener("click", e => { e.stopPropagation(); location.reload(); });
 start();
