@@ -2391,7 +2391,7 @@ function castStrike(pow, dx, dy, kind) {
   player.prot = Math.max(player.prot, performance.now() + 250);
   netFx({k: "blink", a: from, b: [x1, y1]}); sfx.teleport(.7); sfx.slash(2);
   const was = player.stealth; player.stealth = true; // the strike from nowhere counts as a backstab
-  damage(t, 70 + c * 3, "phys"); t.jit = .4;
+  damage(t, 24 + c * 1.2, "phys"); t.jit = .4;
   player.stealth = was;
   hitstop = Math.max(hitstop, .1); shake = Math.max(shake, .3);
   rings.push({x: t.x, y: t.y, r: 1, r1: 6, t: 0, life: .25, c: [120, 255, 190]});
@@ -2512,10 +2512,10 @@ function shieldCharge() { // Knight: anyone the dash runs into is hit and shoved
     sfx.bladeImpact(.8);
   }
 }
-const riftR = b => 5 + b / 12;
+const riftR = b => 4 + b / 20;
 function riftBurst(r) {
   const R = riftR(r.b);
-  if (r.own) hitDummies(r.x, r.y, R, (d, dist) => damage(d, (20 + r.b * 2.2) * (1 - .4 * dist / R), "arcane"));
+  if (r.own) hitDummies(r.x, r.y, R, (d, dist) => damage(d, (8 + r.b * .6) * (1 - .5 * dist / R), "arcane"));
   shakeAt(r.x, r.y, .35 + r.b / 200); sfx.thunder(...heard(r.x, r.y, 100));
   rings.push({x: r.x, y: r.y, r: 1, r1: R * 1.5, t: 0, life: .35, c: [200, 140, 255]});
   rings.push({x: r.x, y: r.y, r: R * 1.5, r1: 1, t: 0, life: .3, c: [255, 230, 255]}); // implodes, then bursts
