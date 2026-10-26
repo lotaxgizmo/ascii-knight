@@ -212,7 +212,7 @@ button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}
 @media (max-height:520px){
   .lb-card{gap:8px;padding:12px 14px;width:min(760px,100%)}
   .lb-card h1{font-size:22px}
-  .lb-classes{grid-template-columns:repeat(4,1fr)}
+  .lb-classes{grid-template-columns:repeat(3,1fr)}
   .lb-classes button>span:not(.stats){display:none}
   .lb-note{display:none}
 }
@@ -222,7 +222,8 @@ button,.slot{touch-action:none;-webkit-tap-highlight-color:transparent}
 .lb-classes{grid-template-columns:repeat(2,minmax(0,1fr))}
 .lb-classes button{min-width:0;box-sizing:border-box}
 .lb-classes .stats{grid-template-columns:auto minmax(0,1fr)}
-@media (max-height:520px){.lb-classes{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-height:520px){.lb-classes{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:760px) and (min-height:521px){.lb-classes{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:360px){.lb-classes{grid-template-columns:minmax(0,1fr)}}
 /* ---- touch layout: the big buttons replace the hotbar; nothing overlaps at the bottom ---- */
 .touch #hotbar{display:none}

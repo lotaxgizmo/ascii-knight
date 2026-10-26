@@ -23,7 +23,7 @@ if (env.VITE_TURN_URLS) ICE.push({urls: env.VITE_TURN_URLS.split(","), username:
 
 // message types: hello (who I am), st (my knight, ~15/s), fx (a spell/attack to replay as visuals),
 // hit (you got hit), dh (I hit a shared dummy: host applies), kill (I died), snap (host's shared state)
-const ACTIONS = ["hello", "st", "fx", "hit", "dh", "kill", "snap"];
+const ACTIONS = ["hello", "st", "fx", "hit", "dh", "kill", "snap", "mobs", "mh"];
 
 // TURN credentials come from our tiny /api/turn function (Cloudflare); without it we still try direct links
 export async function fetchTurn() {

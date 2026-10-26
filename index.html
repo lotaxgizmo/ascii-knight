@@ -54,7 +54,7 @@
 <button id="bladeBtn" class="skill" hidden aria-label="Summon blades">†</button>
 <button id="shieldBtn" class="skill" hidden aria-label="Raise shield">◊</button>
 <button id="rollBtn" class="skill" hidden aria-label="Dodge roll">»</button>
-<div id="score" class="panel collapsed" hidden><button id="scoreChip" aria-expanded="false" aria-label="Show match details"><span id="scoreMini"></span><span class="caret">▾</span></button><div id="scoreFull"><div id="scoreLine"></div><div id="scoreSub"></div><div id="modeSel" hidden><span>Mode for everyone:</span><button data-m="practice">Practice</button><button data-m="ffa">Free for All</button><button data-m="tdm">Team DM</button></div><div class="sc-actions"><button id="boardBtn">Scoreboard</button><button id="leaveBtn" aria-label="Leave and pick another mode">Leave</button></div></div></div>
+<div id="score" class="panel collapsed" hidden><button id="scoreChip" aria-expanded="false" aria-label="Show match details"><span id="scoreMini"></span><span class="caret">▾</span></button><div id="scoreFull"><div id="scoreLine"></div><div id="scoreSub"></div><div id="modeSel" hidden><span>Mode for everyone:</span><button data-m="ffa">Free for All</button><button data-m="boss">Boss Raid</button></div><div class="sc-actions"><button id="boardBtn">Scoreboard</button><button id="leaveBtn" aria-label="Leave and pick another mode">Leave</button></div></div></div>
 <div id="board" class="panel" hidden></div>
 <button id="travelBtn" hidden aria-label="Travel from this waystone">Travel <kbd>E</kbd></button>
 <div id="travel" hidden><div class="tr-card panel"><div class="tr-head"><span class="tt">Waystones · pick where to go</span><button id="travelClose" aria-label="Close map">Close</button></div><div id="travelMap"><canvas id="travelCanvas"></canvas><div id="travelPins"></div></div></div></div>
@@ -67,6 +67,7 @@
     <div class="lb-classes" role="radiogroup" aria-label="Choose your class" id="classPick"></div>
     <div class="lb-modes">
       <button data-mode="ffa"><b>Enter the Arena</b><small>Free for All · every knight for themself · first to 15 kills</small></button>
+      <button data-mode="boss"><b>Boss Raid</b><small>Co-op · team up against a giant boss and its imps</small></button>
     </div>
     <p class="lb-note">No sign-in. Everyone who is online lands in the same arena around the Stone Circle.</p>
   </div>
