@@ -707,13 +707,13 @@ const CLASSES = [
   {id: "knight", name: "Knight", icon: "⚔", desc: "Wide sweeping swing. Dash is a Shield Charge that bowls enemies over; blocking refunds mana.",
     hp: 120, mp: 60, speed: 1, melee: 1, spell: 1, regen: 1, dashCd: 1, arc: 1.35, reach: 1.25,
     tint: [.95, 1.02, 1.12], visor: [120, 220, 255], glow: [150, 200, 255], aura: "glint"},
-  {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute. Bloodlust: under 40% HP his sword hits harder and heals him.",
+  {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute. Dash leaves a trail of fire. Bloodlust: under 40% HP his sword hits harder and heals him.",
     hp: 140, mp: 45, speed: 1.03, melee: 1.3, spell: .75, regen: .85, dashCd: 1, arc: 1, reach: 1,
     tint: [1.3, 1.02, .58], visor: [255, 110, 40], glow: [255, 110, 40], aura: "ember"},
   {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Deep mana, huge spells. Dash is Phase Shift: teleport and leave all your mana behind as an exploding rift.",
     hp: 100, mp: 100, speed: .97, melee: .75, spell: 1.3, regen: 1.35, dashCd: 1.1, arc: 1, reach: 1,
     tint: [.78, .58, 1.45], visor: [210, 140, 255], glow: [170, 90, 255], aura: "arcane"},
-  {id: "shadow", name: "Shadow", icon: "☾", desc: "Fastest on foot, cheap sprint. Backstab: hits from behind or out of smoke always crit.",
+  {id: "shadow", name: "Shadow", icon: "☾", desc: "Fastest on foot. Dash turns her invisible. Backstab: hits from behind or out of smoke always crit.",
     hp: 105, mp: 60, speed: 1.15, melee: 1.1, spell: .9, regen: 1, dashCd: .6, arc: 1, reach: 1,
     tint: [.4, .5, .5], visor: [90, 255, 170], glow: [60, 255, 160], aura: "smoke"},
 ];
@@ -1395,7 +1395,7 @@ function addResidue(kind, x, y, r, own = true, lifeOverride = 0) {
   }
   const life = lifeOverride || (kind === "fire" ? 4.5 : kind === "crater" ? 3.8 : 3.2);
   residues.push({kind, x, y, r, life, max: life, cracks, flames, tick: .3, arcT: .1, arc: null, own});
-  if (residues.length > 24) residues.shift();
+  if (residues.length > 40) residues.shift();
 }
 
 function updateCombat(dt) {
@@ -1433,7 +1433,7 @@ function updateCombat(dt) {
     const k = r.life / r.max;
     if (r.kind === "fire") {
       r.tick -= dt;
-      if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, 3, "burn")); }
+      if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, r.dmg || 3, "burn")); }
     } else if (r.kind === "smoke") { // poison everyone else inside
       r.tick -= dt;
       if (r.tick <= 0) { r.tick = .5; if (r.own) hitDummies(r.x, r.y, r.r * .9, d => damage(d, 5, "poison")); }
@@ -1843,7 +1843,7 @@ function update(dt) {
     }
     if (kn.t <= 0) player.knock = null;
   }
-  shieldCharge();
+  shieldCharge(); dashTrail(dt);
   if (myClass === 1) { // Berserker: entering bloodlust is announced
     const bl = !player.dead && player.hp < player.mhp * BLOOD_HP;
     if (bl && !player.blood) { floaters.push({x: player.x, y: player.y - 10, text: "BLOODLUST", c: [255, 70, 50], big: 1.3, life: 1.4, max: 1.4, vx: 0}); sfx.slam(.2); }
@@ -2431,7 +2431,8 @@ function updateDelayed(dt) {
     if (m.t >= m.fall) { explode(m.x, m.y, m.pow, m.dmg, m.own); meteors.splice(i, 1); }
   }
   // Shadow: standing inside your own smoke hides you from enemies
-  player.stealth = !player.dead && residues.some(r => r.kind === "smoke" && r.own && gdist(r.x, r.y, player.x, player.y) < r.r * .85);
+  // Shadow Step: she's unseen for as long as she dashes
+  player.stealth = !player.dead && ((myClass === 3 && dashing()) || residues.some(r => r.kind === "smoke" && r.own && gdist(r.x, r.y, player.x, player.y) < r.r * .85));
 }
 function drawDelayed() {
   for (const r of rifts) { // a tear in the air where the Sorcerer stood, folding in on itself
@@ -2481,21 +2482,32 @@ function drawSmoke() { // smoke clouds drift over everything inside them
    steerable sprint at almost twice running speed, burning mana every moment (no regen while sprinting).
    Each class also has one thing nobody else has:
    Knight - Shield Charge: his dash bowls over anyone in the way (damage + shove). Blocking a hit refunds mana.
-   Berserker - Bloodlust: under 40% HP his sword hits 40% harder and heals him for a fifth of the damage.
+   Berserker - Inferno Rush: his dash leaves a trail of burning ground behind him.
+     Bloodlust: under 40% HP his sword hits 40% harder and heals him for a fifth of the damage.
    Sorcerer - Phase Shift: instead of rolling he teleports. It burns ALL his mana into a rift left where he stood
      (it detonates a moment later, harder the more mana it ate). Mana keeps regenerating; the shift has a 5 s cooldown.
-   Shadow - Backstab: sword hits from behind or from inside smoke always crit. Sprinting costs her half. */
+   Shadow - Shadow Step: she is invisible to enemies for as long as she dashes, and sprinting costs her half.
+     Backstab: sword hits from behind or from inside smoke (or straight out of a Shadow Step) always crit. */
 const DASH_KEYS = new Set(["KeyC", "Digit6", "ControlLeft"]);
 const SURGE_SPEED = 92, SURGE_MP = 26, KNOCK_T = .22, BLOOD_HP = .4, BLOCK_MP = 8;
 const PHASE_CD = 5, PHASE_DIST = 26, RIFT_DELAY = .55;
 const DASHES = [
   {name: "Shield Charge", icon: "⛨", desc: "dash through enemies, knocking them back · hold to keep charging (drains mana)"},
-  {name: "Rampage", icon: "»", desc: "dodge roll · hold to keep sprinting (drains mana)"},
+  {name: "Inferno Rush", icon: "♨", desc: "a burst that leaves burning ground behind · hold to keep rushing (drains mana)"},
   {name: "Phase Shift", icon: "✧", desc: "teleport; leaves all your mana behind as an exploding rift · 5 s cooldown"},
-  {name: "Shadow Dash", icon: "»", desc: "dodge roll · hold to sprint at half the mana cost"},
+  {name: "Shadow Step", icon: "☾", desc: "vanish while you dash · hold to stay unseen (drains mana, at half the cost)"},
 ];
-let dashHeld = false;
+let dashHeld = false, trailT = 0;
 const dashHits = new Map();
+const dashing = () => !!((player.roll && player.roll.t < ROLL_TIME) || player.surge);
+function dashTrail(dt) { // Berserker: burning footprints; Shadow: wisps of smoke
+  if (player.dead || !dashing()) { trailT = 0; return; }
+  trailT -= dt; if (trailT > 0) return;
+  if (myClass === 1) {
+    trailT = .09; addResidue("fire", player.x, player.y, 2.4, true, 2.6); residues[residues.length - 1].dmg = 7;
+    netFx({k: "trail", x: player.x, y: player.y});
+  } else if (myClass === 3) { trailT = .12; smokePuff(player.x, player.y, 5); }
+}
 function shieldCharge() { // Knight: anyone the dash runs into is hit and shoved aside (once per 0.6 s each)
   if (myClass !== 0 || player.dead) return;
   const r = player.roll, s = player.surge;
@@ -2792,6 +2804,7 @@ function onFx(f, id) {
   else if (f.k === "meteor") meteors.push({...f.m, own: false});
   else if (f.k === "boom") explode(f.x, f.y, f.pow, f.dmg, false);
   else if (f.k === "erupt") eruptFx(f.x, f.y, f.pow, false);
+  else if (f.k === "trail") addResidue("fire", f.x, f.y, 2.4, false, 2.6);
   else if (f.k === "rift") { phaseFx(f.a[0], f.a[1], f.b[0], f.b[1]); rifts.push({x: f.a[0], y: f.a[1], t: 0, b: f.burned, own: false}); }
   else if (f.k === "blink") { smokePuff(f.a[0], f.a[1]); smokePuff(f.b[0], f.b[1]); sfx.teleport(...heard(f.b[0], f.b[1])); }
   else if (f.k === "smoke") { addResidue("smoke", f.x, f.y, f.r, false, f.life); smokePuff(f.x, f.y, 30); }
