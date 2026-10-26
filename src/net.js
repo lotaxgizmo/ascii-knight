@@ -6,7 +6,7 @@ import {joinRoom, selfId, getRelaySockets, createEvent, subscribe} from "tryster
 export {selfId};
 // bump PROTOCOL whenever messages change: older cached copies of the game then land in a different room and
 // can never mix their match state into this one (that caused players to be thrown around the arena)
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 const APP_ID = `gizmo-knight-p${PROTOCOL}`;
 // Relays checked to answer quickly and accept the ephemeral events Trystero uses for matchmaking.
 // Every peer connects to all of them, so any two players always share several working relays.

@@ -21,6 +21,22 @@ const WAYSTONES = [
   {name: "Moon Tower", x: T.x + 18, y: T.y + 12}, {name: "Broken Ring", x: BR.x + 28, y: BR.y + 14}, {name: "Mirror Lake", x: LAKE.x - LAKE.r - 18, y: LAKE.y - 34},
   ...CAMPS.map(c => ({name: c.name, x: c.x + 20, y: c.y + 12})),
 ];
+for (const w of WAYSTONES) { w.x0 = w.x; w.y0 = w.y; } // buildWorld nudges them per map, always from here
+/* Maps: the same lay of the land (arena, landmarks, rivers) in three very different places. The host's map
+   is everyone's map, and it moves on to the next one every round. */
+const MAPS = [
+  {id: "vale", name: "Moonlit Vale", amb: [.6, .66, .86], mist: [.55, .62, .75], water: [.2, .3, .42], lava: 0, seed: 1337, mo: 0,
+    path: [74, 60, 42], stone: [90, 96, 108], rune: [110, 215, 255], runeL: [.35, .75, 1], motes: 40, names: {}},
+  {id: "ash", name: "Ashen Wastes", amb: [.7, .5, .44], mist: [.34, .27, .25], water: [.9, .55, .15], lava: 1, seed: 9001, mo: 37,
+    path: [84, 70, 60], stone: [74, 66, 72], rune: [255, 130, 40], runeL: [1, .5, .15], motes: 22,
+    names: {"Stone Circle": "Obsidian Ring", "Moonlit Vale": "Ashen Wastes", "Whisperwood": "Cinderwood", "Mirror Lake": "Molten Lake", "Silver River": "River of Fire", "Northern Wilds": "Smoking Barrens"}},
+  {id: "frost", name: "Frostmere", amb: [.62, .7, .92], mist: [.8, .86, .96], water: [.35, .45, .55], lava: 0, seed: 4242, mo: 71, ice: true,
+    path: [92, 98, 116], stone: [104, 132, 162], rune: [160, 245, 255], runeL: [.5, .9, 1], motes: 90,
+    names: {"Stone Circle": "Frozen Henge", "Moonlit Vale": "Frostmere", "Whisperwood": "Hoarfrost Wood", "Mirror Lake": "Glass Lake", "Silver River": "Icebound River", "Northern Wilds": "White Wastes"}},
+];
+let mapI = 0;
+const MAPD = () => MAPS[mapI];
+const placeName = reg => MAPD().names[reg] || reg;
 const MAX_LIGHTS = 16;
 
 /* glyph sets per material, ordered light -> dense */
@@ -32,7 +48,8 @@ const SETS = [
   " .,:;&%@",      // 4 tree canopy
   " .,:*",         // 5 flowers
   " .:-~",         // 6 mist
-  " .*+xX#@"       // 7 glow (runes, mushrooms)
+  " .*+xX#@",      // 7 glow (runes, mushrooms)
+  " .-=_~"         // 8 ice (walkable, slippery)
 ];
 const ATLAS = SETS.join("");
 const STARTS = []; { let a = 0; for (const s of SETS) { STARTS.push(a); a += s.length; } }
@@ -96,7 +113,8 @@ function coarseField(step, fn) {
     return (a[o] * (1 - u) + a[o + 1] * u) * (1 - v) + (a[o + cw] * (1 - u) + a[o + cw + 1] * u) * v;
   };
 }
-let lakeN = (x, y) => fbm(x * 0.02 + 40, y * VS * 0.02 + 40, 3);
+const lakeBase = (x, y) => fbm(x * 0.02 + 40, y * VS * 0.02 + 40, 3);
+let lakeN = lakeBase;
 function lakeDist(x, y) {
   const gx = x, gy = y * VS;
   const ln = lakeN(x, y);
@@ -106,15 +124,16 @@ const gdist = (ax, ay, bx, by) => Math.hypot(ax - bx, (ay - by) * VS);
 
 const HGT = new Float32Array(W * H); // rolling-hill height field, used for baked hill shading
 function genGround() {
+  const th = MAPD().id, MO = MAPD().mo;
   for (let x = 0; x < W; x++) {
-    rc[x] = 189 + Math.sin(x * 0.0081) * 38 + Math.sin(x * 0.0194 + 2) * 14 + (fbm(x * 0.0125, 7.3, 3) - .5) * 26;
-    rw[x] = 10 + fbm(x * 0.019, 19.1, 2) * 9;
+    rc[x] = 189 + Math.sin(x * 0.0081 + MO * .05) * 38 + Math.sin(x * 0.0194 + 2) * 14 + (fbm(x * 0.0125, 7.3 + MO, 3) - .5) * 26;
+    rw[x] = 10 + fbm(x * 0.019, 19.1 + MO, 2) * 9;
   }
-  lakeN = coarseField(3, lakeN);
-  const hillN = coarseField(3, (x, y) => fbm(x * .011 + 5, y * VS * .011 + 9, 4));
-  const darkN = coarseField(4, (x, y) => fbm(x * .012 + 100, y * VS * .012 + 50, 3));
-  const zoneN = coarseField(6, (x, y) => fbm(x * .006 + 70, y * VS * .006 + 20, 3));
-  const dirtN = coarseField(3, (x, y) => fbm(x * .025 + 300, y * VS * .025 + 300, 3));
+  lakeN = coarseField(3, lakeBase);
+  const hillN = coarseField(3, (x, y) => fbm(x * .011 + 5 + MO, y * VS * .011 + 9, 4));
+  const darkN = coarseField(4, (x, y) => fbm(x * .012 + 100 + MO, y * VS * .012 + 50, 3));
+  const zoneN = coarseField(6, (x, y) => fbm(x * .006 + 70 + MO, y * VS * .006 + 20, 3));
+  const dirtN = coarseField(3, (x, y) => fbm(x * .025 + 300 + MO, y * VS * .025 + 300, 3));
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) HGT[y * W + x] = hillN(x, y) + vnoise(x * .05, y * VS * .05) * .12;
   const hAt = (x, y) => HGT[clamp(y, 0, H - 1) * W + clamp(x, 0, W - 1)];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -123,12 +142,29 @@ function genGround() {
     // moonlight from the upper left: slopes facing it brighten, slopes facing away fall into shadow
     const shade = clamp(1 + ((hAt(x - 1, y) - hAt(x + 1, y)) * .8 + (hAt(x, y - 1) - hAt(x, y + 1)) * 1.1) * 16, .62, 1.38);
     let r, g, b, m = 0;
-    if (sd < 0) {
+    if (sd < 0 && th === "frost") { // frozen over: pale ice you can walk (and slide) on, with cracks
+      const n = fbm(gx * .05, gy * .05, 2), crack = Math.abs(vnoise(gx * .09, gy * .09) - .5) < .025;
+      r = 58 + n * 30; g = 84 + n * 30; b = 104 + n * 28;
+      if (crack) { r *= .6; g *= .7; b *= .8; } else if (hh > .985) { r += 50; g += 50; b += 50; }
+      m = 8;
+    } else if (sd < 0 && th === "ash") { // lava: glowing rock that flows (and burns: it's a wall)
+      const n = fbm(gx * .06, gy * .06, 3), depth = Math.min(1, -sd / 8);
+      r = 150 + 90 * n; g = 30 + 110 * n * n * depth; b = 6;
+      if (sd > -1.6 && hh > .35) { r = 70; g = 30; b = 22; } // cooling crust at the edge
+      m = 1; BLK[i] = 1;
+    } else if (sd < 0) {
       const depth = Math.min(1, -sd / 10), n = fbm(gx * .08, gy * .08, 2);
       const k = .75 + n * .5;
       r = (18 - 9 * depth) * k; g = (40 - 16 * depth) * k; b = (68 - 10 * depth) * k;
       if (sd > -1.4 && hh > .4) { r = 130; g = 150; b = 165; } // foam where water laps the bank
       m = 1; BLK[i] = 1;
+    } else if (sd < 3.5 && th === "ash") { // black basalt crust along the lava, cracked with glowing seams
+      const k = .55 + hh * .6; r = 60 * k; g = 50 * k; b = 48 * k; m = 2;
+      if (sd < 2 && hash2(x + 3, y) > .9) { r = 255; g = 110; b = 30; m = 7; }
+      r *= shade; g *= shade; b *= shade;
+    } else if (sd < 3.5 && th === "frost") { // snow drifted up against the ice
+      const k = .8 + hh * .35; r = 92 * k; g = 102 * k; b = 122 * k; m = 0;
+      r *= shade; g *= shade; b *= shade;
     } else if (sd < 3.5) { // wet mud and pebbles along the shore, with reeds
       const k = .55 + hh * .7;
       r = 70 * k; g = 62 * k; b = 52 * k;
@@ -136,6 +172,28 @@ function genGround() {
       if (sd > 1.2 && hash2(x, y + 7) > .62) { r = 46 * k; g = 96 * k; b = 44 * k; m = 0; } // reeds
       else if (m !== 2) m = 3;
       r *= shade; g *= shade; b *= shade;
+    } else if (th === "ash") { // ash flats, scorched red patches, black glass, the odd live cinder
+      const g1 = fbm(gx * .045, gy * .045, 3), dark = darkN(x, y), zone = zoneN(x, y);
+      r = 64 + 34 * g1; g = 54 + 22 * g1; b = 50 + 16 * g1;
+      const scorch = clamp((zone - .56) * 6, 0, 1), glass = clamp((.42 - zone) * 6, 0, 1);
+      r += scorch * 30 - glass * 16; g += scorch * 2 - glass * 14; b += -scorch * 6 - glass * 8;
+      if (dark < .42) { const k = clamp(.55 + (dark - .3) * 3.5, .5, 1); r *= k; g *= k; b *= k; }
+      if (hh > .93) { r += 14; g += 10; b += 8; }
+      r *= shade; g *= shade; b *= shade;
+      const dp = dirtN(x, y);
+      if (dp > .7) { const k = .7 + hh * .5; r = 100 * k; g = 94 * k; b = 88 * k; m = 3; } // pale ash drifts
+      else if (hh < .0003) { r = 255; g = 120 + hash2(x + 7, y) * 60; b = 30; m = 7; }
+    } else if (th === "frost") { // snowfields, wind-packed blue drifts, frozen grass poking through
+      const g1 = fbm(gx * .045, gy * .045, 3), dark = darkN(x, y), zone = zoneN(x, y);
+      r = 74 + 26 * g1; g = 82 + 26 * g1; b = 102 + 26 * g1;
+      const packed = clamp((zone - .56) * 6, 0, 1), grass = clamp((.42 - zone) * 6, 0, 1);
+      r += -packed * 10 - grass * 34; g += -packed * 4 - grass * 22; b += packed * 10 - grass * 40;
+      if (dark < .42) { const k = clamp(.6 + (dark - .3) * 3.2, .55, 1); r *= k; g *= k; b *= k * 1.06; }
+      if (hh > .95) { r += 26; g += 26; b += 26; } // glints
+      r *= shade; g *= shade; b *= shade;
+      const dp = dirtN(x, y);
+      if (dp > .72) { const k = .7 + hh * .4; r = 72 * k; g = 76 * k; b = 86 * k; m = 3; } // bare frozen rock
+      else if (hh < .003 && dark > .45) { r = 170; g = 240; b = 255; m = 7; } // frost crystals
     } else {
       const g1 = fbm(gx * .045, gy * .045, 3);
       const dark = darkN(x, y);
@@ -171,9 +229,9 @@ function stampPath(pts, wid) {
       for (let y = Math.floor(py - wid / VS); y <= py + wid / VS; y++)
         for (let x = Math.floor(px - wid); x <= px + wid; x++) {
           if (gdist(x + .5, y + .5, px, py) > wid + (hash2(x, y) - .5) * 1.4) continue;
-          const m = matAt(x, y); if (m === 1 || m === 255) continue;
-          const k = .72 + hash2(x * 3, y) * .5;
-          setC(x, y, 74 * k, 60 * k, 42 * k, 3);
+          const m = matAt(x, y); if (m === 1 || m === 8 || m === 255) continue;
+          const k = .72 + hash2(x * 3, y) * .5, pc = MAPD().path;
+          setC(x, y, pc[0] * k, pc[1] * k, pc[2] * k, 3);
         }
     }
   }
@@ -201,16 +259,19 @@ function drawStone(bx, by, w, h, sd, rune = true) {
       if (t > .82 && Math.abs(u) > Math.sqrt(Math.max(0, 1 - Math.pow((t - .82) / .18, 2)))) continue;
       const n = vnoise(x * .9 + sd, y * .6);
       const k = (1 - u * .32 + t * .12) * (.72 + n * .5);
-      let r = 90 * k, g = 96 * k, b = 108 * k;
-      if (yy < 2 && hash2(x, y) > .35) { r *= .75; g *= 1.15; b *= .75; }
+      const sc = MAPD().stone;
+      let r = sc[0] * k, g = sc[1] * k, b = sc[2] * k;
+      if (yy < 2 && hash2(x, y) > .35 && MAPD().id === "vale") { r *= .75; g *= 1.15; b *= .75; } // moss
+      if (MAPD().id === "frost" && (t > .8 || u < -.5) && hash2(x, y) > .3) { r = 150; g = 165; b = 185; } // snow on the lit side
       setC(x, y, r, g, b, 2);
       if (yy < 2) block(x, y);
     }
   }
   if (rune) {
     const rx = Math.round(bx - .5), ry = by - Math.round(h * .62);
-    setC(rx, ry, 110, 215, 255, 7); setC(rx, ry + 1, 90, 190, 245, 7); setC(rx, ry + 2, 110, 215, 255, 7);
-    staticLights.push({x: rx + .5, y: by, r: 9, i: .55, c: [.35, .75, 1.0], ph: rnd() * 6, kind: 'rune'});
+    const rc_ = MAPD().rune;
+    setC(rx, ry, ...rc_, 7); setC(rx, ry + 1, rc_[0] * .85, rc_[1] * .88, rc_[2] * .95, 7); setC(rx, ry + 2, ...rc_, 7);
+    staticLights.push({x: rx + .5, y: by, r: 9, i: .55, c: MAPD().runeL, ph: rnd() * 6, kind: 'rune'});
   }
   occluders.push({x0: bx - w / 2, x1: bx + w / 2, yTop: by - h, yBase: by});
 }
@@ -240,11 +301,12 @@ function drawDeadTree(bx, by, sd) {
   const h = 9;
   for (let yy = 0; yy < h; yy++) {
     const wob = Math.round((vnoise(yy * .4, sd) - .5) * 2);
-    setC(bx + wob, by - 1 - yy, 70, 64, 58, 3); if (yy < 5) setC(bx + wob - 1, by - 1 - yy, 54, 48, 44, 3);
+    const ch = MAPD().id === "ash" ? .6 : 1;
+    setC(bx + wob, by - 1 - yy, 70 * ch, 64 * ch, 58 * ch, 3); if (yy < 5) setC(bx + wob - 1, by - 1 - yy, 54 * ch, 48 * ch, 44 * ch, 3);
   }
   for (let k = 0; k < 4; k++) {
     const sy = by - 4 - k * 1.5 | 0, dir = k % 2 ? 1 : -1, ln = 3 + (hash2(k, sd | 0) * 3 | 0);
-    for (let j = 1; j <= ln; j++) setC(bx + dir * j, sy - (j >> 1), 66, 60, 54, 3);
+    for (let j = 1; j <= ln; j++) { if (MAPD().id === "ash" && j === ln && hash2(k, sd) > .92) setC(bx + dir * j, sy - (j >> 1), 255, 120, 40, 7); else setC(bx + dir * j, sy - (j >> 1), 66, 60, 54, 3); }
   }
   block(bx, by - 1); block(bx - 1, by - 1);
   occluders.push({x0: bx - 5, x1: bx + 5, yTop: by - h - 2, yBase: by});
@@ -323,7 +385,8 @@ function drawPine(bx, by, h, sd) { // layered conifer: stacked tiers that widen 
     for (let x = Math.floor(bx - half); x <= bx + half; x++) {
       const u = (x + .5 - bx) / (half + .01);
       const lit = clamp(.62 - u * .32 + (tier === 0 ? -.18 : .1) + vnoise(x * .7, y * .9 + sd) * .3, .25, 1.2);
-      setC(x, y, (16 + hue * 8) * lit * 1.3, (50 + hue * 10) * lit * 1.3, (40 + hue * 6) * lit * 1.3, 4);
+      if (MAPD().id === "frost" && (tier === 0 || lit > .62) && hash2(x, y) > .25) setC(x, y, 120 * lit + 30, 132 * lit + 30, 150 * lit + 34, 4); // snow on the boughs
+      else setC(x, y, (16 + hue * 8) * lit * 1.3, (50 + hue * 10) * lit * 1.3, (40 + hue * 6) * lit * 1.3, 4);
     }
   }
   occluders.push({x0: bx - h * .42, x1: bx + h * .42, yTop: by - h, yBase: by});
@@ -335,8 +398,10 @@ function drawRock(bx, by, r, sd) { // a lumpy boulder lit from the upper left, m
     const dx = (x + .5 - bx) / r, dy = (y + .5 - (by - ry)) / ry, d = dx * dx + dy * dy;
     if (d > 1 + (vnoise(x * .9 + sd, y) - .5) * .5) continue;
     const lit = clamp(.75 - dx * .35 - dy * .3 + hash2(x, y) * .2, .35, 1.25);
-    let c = [96 * lit, 98 * lit, 104 * lit];
-    if (dy > .45 && hash2(x + 1, y) > .5) c = [c[0] * .7, c[1] * 1.05, c[2] * .7];
+    const th = MAPD().id;
+    let c = th === "ash" ? [74 * lit, 64 * lit, 62 * lit] : [96 * lit, 98 * lit, 104 * lit];
+    if (th === "frost" && dy < -.25) c = [150 * lit, 160 * lit, 178 * lit]; // snow cap
+    else if (th === "vale" && dy > .45 && hash2(x + 1, y) > .5) c = [c[0] * .7, c[1] * 1.05, c[2] * .7];
     setC(x, y, c[0], c[1], c[2], 2); if (dy > .2) block(x, y);
   }
 }
@@ -347,7 +412,8 @@ function drawBush(bx, by, r, sd) {
     const dx = (x + .5 - bx) / r, dy = (y + .5 - (by - ry)) / ry, d = dx * dx + dy * dy;
     if (d > 1 + (vnoise(x * .8 + sd, y * 1.1) - .5) * .6) continue;
     const lit = clamp(.7 - dx * .3 - dy * .35 + vnoise(x * .6, y + sd) * .35, .3, 1.25);
-    if (berries && hash2(x, y + 2) > .85) setC(x, y, 170, 40, 60, 5);
+    if (MAPD().id === "frost") setC(x, y, 100 * lit + 20, 112 * lit + 20, 128 * lit + 26, 4); // a snowed-over bush
+    else if (berries && hash2(x, y + 2) > .85) setC(x, y, 170, 40, 60, 5);
     else setC(x, y, 26 * lit * 1.3, 64 * lit * 1.3, 34 * lit * 1.3, 4);
   }
 }
@@ -364,6 +430,38 @@ function drawTent(bx, by, sd) { // a small A-frame of patched canvas with a dark
     }
   }
   occluders.push({x0: bx - h * .9, x1: bx + h * .9, yTop: by - h, yBase: by});
+}
+
+function drawSpire(bx, by, h, sd) { // Ashen Wastes: a column of black basalt with a molten seam
+  shadow(bx + h * .25, by + .4, h * .4, 1.6, .45);
+  const w = 2 + (hash2(sd, 1) * 2 | 0);
+  for (let yy = 0; yy < h; yy++) {
+    const half = w * (1 - yy / h * .5) + (vnoise(yy * .5, sd) - .5) * .8, y = by - 1 - yy;
+    for (let x = Math.floor(bx - half); x <= bx + half; x++) {
+      const u = (x + .5 - bx) / (half + .01), k = (u < 0 ? 1.1 : .7) * (.75 + hash2(x, y) * .3);
+      if (Math.abs(u) < .18 && yy > 1 && yy < h * .7 && hash2(sd, yy) > .45) setC(x, y, 255, 100 + yy * 4, 30, 7);
+      else setC(x, y, 66 * k, 58 * k, 62 * k, 2);
+      if (yy < 2) block(x, y);
+    }
+  }
+  if (hash2(sd, 5) > .6) staticLights.push({x: bx + .5, y: by, r: 12, i: .7, c: [1, .45, .12], ph: rnd() * 6, kind: "fire"});
+  occluders.push({x0: bx - w, x1: bx + w, yTop: by - h, yBase: by});
+}
+function drawCrystal(bx, by, h, sd) { // Frostmere: a cluster of ice shards, faintly lit from inside
+  shadow(bx + 2, by + .4, h * .5, 1.4, .5);
+  for (let s = -1; s <= 1; s++) {
+    const sh = Math.round(h * (s ? .55 + hash2(sd, s + 3) * .3 : 1)), lean = s * .35;
+    for (let yy = 0; yy < sh; yy++) {
+      const half = 1.4 * (1 - yy / sh), y = by - 1 - yy, cx = bx + s * 2 + lean * yy;
+      for (let x = Math.floor(cx - half); x <= cx + half; x++) {
+        const u = (x + .5 - cx) / (half + .01), k = (u < 0 ? 1.15 : .75) * (.8 + yy / sh * .4);
+        setC(x, y, 110 * k, 175 * k, 215 * k, yy > sh * .6 && u < 0 ? 7 : 2);
+        if (yy < 2) block(x, y);
+      }
+    }
+  }
+  if (hash2(sd, 7) > .5) staticLights.push({x: bx + .5, y: by, r: 12, i: .55, c: [.45, .85, 1], ph: rnd() * 6, kind: "rune"});
+  occluders.push({x0: bx - 4, x1: bx + 4, yTop: by - h, yBase: by});
 }
 
 function drawWaystone(bx, by) { // dark obelisk with a glowing rune channel, on a ring of ground runes
@@ -392,11 +490,15 @@ function clearOf(x, y) {
   for (const c of CAMPS) if (gdist(x, y, c.x, c.y) < 30) return false;
   for (const w of WAYSTONES) if (gdist(x, y, w.x, w.y) < 12) return false;
   if (Math.min(riverDist(x, y), lakeDist(x, y)) < 6) return false;
-  for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) if (matAt(x + dx, y + dy) === 3) return false;
+  for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++) { const m = matAt(x + dx, y + dy); if (m === 3 || m === 8) return false; }
   return true;
 }
 
 function buildWorld() {
+  const th = MAPD().id;
+  COL.fill(0); MAT.fill(0); BLK.fill(0); occluders.length = 0; staticLights.length = 0;
+  seed = MAPD().seed;
+  for (const w of WAYSTONES) { w.x = w.x0; w.y = w.y0; }
   genGround();
   // paths
   stampPath([[S.x, S.y + 6], [595, 362], [659, 342], [G.x, G.y + 4]], 2.4);
@@ -452,7 +554,7 @@ function buildWorld() {
   objs.push({y: R.y + 2, f: () => drawStone(R.x + 26, R.y + 2, 3, 11, 8.8, true)});
   for (let k = 0; k < 120; k++) {
     const x = R.x + (rnd() - .5) * 70 | 0, y = R.y + (rnd() - .5) * 30 | 0;
-    if (MAT[y * W + x] !== 1) { const c = 60 + rnd() * 40; setC(x, y, c, c, c + 6, 2); }
+    if (MAT[y * W + x] !== 1 && MAT[y * W + x] !== 8) { const c = 60 + rnd() * 40; setC(x, y, c, c, c + 6, 2); }
   }
   // tower
   objs.push({y: T.y, f: () => drawTower(T.x, T.y)});
@@ -472,7 +574,7 @@ function buildWorld() {
     for (let k = 0; k < 200; k++) {
       const x = Math.round(w.x + (k ? (rnd() - .5) * k * .4 : 0)), y = Math.round(w.y + (k ? (rnd() - .5) * k * .2 : 0));
       let ok = true;
-      for (let dy = -2; dy <= 3 && ok; dy++) for (let dx = -3; dx <= 3; dx++) { const m = matAt(x + dx, y + dy); if (m === 1 || m === 255 || BLK[(y + dy) * W + x + dx]) { ok = false; break; } }
+      for (let dy = -2; dy <= 3 && ok; dy++) for (let dx = -3; dx <= 3; dx++) { const m = matAt(x + dx, y + dy); if (m === 1 || m === 8 || m === 255 || BLK[(y + dy) * W + x + dx]) { ok = false; break; } }
       if (ok) { w.x = x; w.y = y; break; }
     }
     objs.push({y: w.y, f: () => drawWaystone(w.x, w.y)});
@@ -480,13 +582,21 @@ function buildWorld() {
   // trees: round broadleaf trees in the south, pines north of the river
   for (let gy = 6; gy < H - 4; gy += 3) for (let gx = 4; gx < W - 4; gx += 5) {
     const x = gx + (rnd() * 5 | 0), y = gy + (rnd() * 3 | 0);
-    const f = fbm(x * .008 + 11, y * VS * .008 + 23, 3);
+    const f = fbm(x * .008 + 11 + MAPD().mo, y * VS * .008 + 23, 3);
     const edge = x < 14 || y < 10 || x > W - 15 || y > H - 9;
-    const p = edge ? .95 : f > .56 ? .8 : f > .5 ? .25 : .025;
+    const p = (edge ? .95 : f > .56 ? .8 : f > .5 ? .25 : .025) * (th === "ash" && !edge ? .45 : 1);
     if (rnd() > p) continue;
     if (!edge && !clearOf(x, y)) continue;
-    if (edge && MAT[y * W + x] === 1) continue;
+    if (edge && (MAT[y * W + x] === 1 || MAT[y * W + x] === 8)) continue;
     const r = 4 + rnd() * 4.5, north = y < rc[clamp(x, 0, W - 1)] - 6;
+    if (th === "ash") { // a burnt forest: dead trunks and basalt spires
+      if (rnd() < .55) objs.push({y, f: () => drawDeadTree(x, y, x * .37 + y)}); else objs.push({y, f: () => drawSpire(x, y, 8 + rnd() * 9, x * .37 + y)});
+      continue;
+    }
+    if (th === "frost") { // snow-laden pines everywhere, ice crystals where the forest opens up
+      if (f < .56 && rnd() < .35) objs.push({y, f: () => drawCrystal(x, y, 6 + rnd() * 6, x * .37 + y)}); else objs.push({y, f: () => drawPine(x, y, 9 + rnd() * 7, x * .37 + y)});
+      continue;
+    }
     // glowing mushrooms under the forest
     if (f > .56 && rnd() < .25) { const mx = x + (rnd() * 8 - 4 | 0), my = y + 2; if (MAT[my * W + mx] === 0) setC(mx, my, 70, 210, 190, 7); }
     if (north && rnd() < .7) objs.push({y, f: () => drawPine(x, y, 9 + rnd() * 7, x * .37 + y)});
@@ -496,9 +606,13 @@ function buildWorld() {
   for (let k = 0; k < W * H / 1400; k++) {
     const x = 10 + rnd() * (W - 20) | 0, y = 8 + rnd() * (H - 16) | 0;
     if (!clearOf(x, y)) continue;
-    if (rnd() < .45) objs.push({y, f: () => drawRock(x, y, 1 + rnd() * 2.2, k)});
+    if (rnd() < (th === "ash" ? .8 : .45)) objs.push({y, f: () => drawRock(x, y, 1 + rnd() * 2.2, k)});
     else objs.push({y, f: () => drawBush(x, y, 1.6 + rnd() * 1.6, k)});
   }
+  if (MAPD().lava) for (let x = 20; x < W - 20; x += 38) { // the river of fire lights its banks
+    staticLights.push({x, y: rc[x], r: 34, i: 1.1, c: [1, .45, .12], ph: x, kind: "fire"});
+  }
+  if (MAPD().lava) for (let a = 0; a < 6.28; a += .9) staticLights.push({x: LAKE.x + Math.cos(a) * LAKE.r * .7, y: LAKE.y + Math.sin(a) * LAKE.r * .7 / VS, r: 40, i: 1.2, c: [1, .45, .12], ph: a * 9, kind: "fire"});
   objs.sort((a, b) => a.y - b.y);
   for (const o of objs) o.f();
 }
@@ -514,7 +628,7 @@ function regionAt(x, y) {
   if (lakeDist(x, y) < 14) return "Mirror Lake";
   if (riverDist(x, y) < 14) return "Silver River";
   if (y < rc[clamp(x | 0, 0, W - 1)]) return "Northern Wilds";
-  if (fbm(x * .008 + 11, y * VS * .008 + 23, 3) > .52) return "Whisperwood";
+  if (fbm(x * .008 + 11 + MAPD().mo, y * VS * .008 + 23, 3) > .52) return "Whisperwood";
   return "Moonlit Vale";
 }
 const REGION_XP = {"Broken Ring": 50, "Ember Camp": 35, "Hunter's Camp": 35, "Southern Camp": 35, "Stone Circle": 0, "Old Barrow": 40, "Fallen Keep": 40, "Moon Tower": 60, "Mirror Lake": 30, "Silver River": 20, "Northern Wilds": 30, "Whisperwood": 25, "Moonlit Vale": 15};
@@ -542,6 +656,7 @@ SETS.forEach((s, i) => { setGLSL += `${i ? "else " : ""}if(sm<${i}.5){st=${START
 const FS_CELLS = COMMON + `
 uniform sampler2D uWorld;uniform sampler2D uMat;
 uniform vec2 uWS;uniform vec2 uOrigin;uniform float uTime;uniform vec3 uAmb;uniform float uVS;
+uniform vec3 uWaterC;uniform float uLava;uniform vec3 uMist;
 uniform vec4 uL[${MAX_LIGHTS}];uniform vec4 uLC[${MAX_LIGHTS}];
 void main(){
   vec2 cell=floor(gl_FragCoord.xy);
@@ -555,8 +670,12 @@ void main(){
   if(m==1.){
     float wv=sin(g.x*.22+g.y*.1-uTime*1.6+vn(g*.06)*7.);
     float sp=pow(max(wv,0.),10.);
-    c+=vec3(.2,.3,.42)*sp;
+    c+=uWaterC*sp;
     jit+=sp*.5+sin(uTime*2.+h*30.)*.08;
+    c*=1.-uLava*.35+uLava*.7*vn(g*.07+vec2(uTime*.25,-uTime*.1)); // lava churns
+  } else if(m==8.){
+    float gn=pow(max(sin(g.x*.13-g.y*.07+uTime*.35+h*1.5),0.),24.);
+    c+=vec3(.4,.45,.5)*gn; jit+=gn*.4;
   } else if(m==0.||m==4.||m==5.){
     float wind=vn(vec2(g.x*.04-uTime*.6,g.y*.04));
     jit+=(wind-.5)*.35;
@@ -573,14 +692,15 @@ void main(){
     L+=uLC[i].rgb*l.w*a*a;
   }
   if(m==7.){L=max(L,vec3(1.))*(.85+.3*sin(uTime*2.5+h*6.28));}
+  if(m==1.&&uLava>0.){L=max(L,vec3(1.15));}
   vec3 col=c*L;
   float mistN=fbm(g*.022+vec2(uTime*.05,-uTime*.02));
   float mist=smoothstep(.52,.82,mistN);
-  vec3 mcol=vec3(.55,.62,.75)*(.2+dot(L,vec3(.3))*.55);
+  vec3 mcol=uMist*(.2+dot(L,vec3(.3))*.55);
   col=mix(col,mcol,mist*.42);
   float lum=dot(col,vec3(.3,.59,.11));
   float sm=m;
-  if(mist>.7&&m!=7.&&m!=2.&&m!=4.)sm=6.;
+  if(mist>.7&&m!=7.&&m!=2.&&m!=4.&&!(m==1.&&uLava>0.))sm=6.;
   float st=0.,ln=1.;
   ${setGLSL}
   float t=clamp(pow(lum*2.1,.62)+jit,0.,.999);
@@ -710,7 +830,7 @@ const CLASSES = [
   {id: "berserker", name: "Berserker", icon: "⚒", desc: "Burning brute. Dash leaves a trail of fire. Bloodlust: under 40% HP his sword hits harder and heals him.",
     hp: 140, mp: 45, speed: 1.03, melee: 1.3, spell: .75, regen: .85, dashCd: 1, arc: 1, reach: 1,
     tint: [1.3, 1.02, .58], visor: [255, 110, 40], glow: [255, 110, 40], aura: "ember"},
-  {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Deep mana, huge spells. Dash is Phase Shift: teleport and leave all your mana behind as an exploding rift.",
+  {id: "sorcerer", name: "Sorcerer", icon: "✦", desc: "Deep mana, huge spells. Dash is Phase Shift: chain teleports while your mana lasts, each leaving a small rift.",
     hp: 100, mp: 100, speed: .97, melee: .75, spell: 1.3, regen: 1.35, dashCd: 1.1, arc: 1, reach: 1,
     tint: [.78, .58, 1.45], visor: [210, 140, 255], glow: [170, 90, 255], aura: "arcane"},
   {id: "shadow", name: "Shadow", icon: "☾", desc: "Fastest on foot. Dash turns her invisible. Backstab: hits from behind or out of smoke always crit.",
@@ -895,7 +1015,7 @@ function updateHUD() {
   }
   kit().forEach((sp, i) => { slotCds[i + 1].style.height = Math.min(100, spellCd[SLOT_KEYS[i]] / sp.cd * 100) + "%"; });
   slot0cd.style.height = (player.atkCd > 0 ? player.atkCd / .38 * 100 : 0) + "%";
-  slotCds[5].style.height = player.rollCd / (myClass === 2 ? PHASE_CD : ROLL_CD + ROLL_TIME) * 100 + "%";
+  slotCds[5].style.height = (myClass === 2 ? (player.mp < PHASE_MP ? 1 : 0) : player.rollCd / (ROLL_CD + ROLL_TIME)) * 100 + "%";
   $("coords").textContent = `X: ${Math.round(player.x - S.x)} Y: ${Math.round((S.y - player.y) * VS)}`;
 }
 const xpNeed = () => 60 + player.lv * 40;
@@ -1232,7 +1352,7 @@ function initDummies() {
   for (const [ox, oy] of [[-14, 25], [0, 29], [14, 25]]) {
     const x = S.x + ox; let y = S.y + oy;
     for (let k = 0; k < 20 && blockedAt(x, y); k++) y += 1;
-    dummies.push({x, y, hp: 260, mhp: 260, flash: 0, jit: 0, burn: 0, burnT: 0, shock: 0, dead: 0});
+    dummies.push({x, y, y0: S.y + oy, hp: 260, mhp: 260, flash: 0, jit: 0, burn: 0, burnT: 0, shock: 0, dead: 0});
   }
 }
 function hitDummies(x, y, r, fn) { for (const d of targets()) { const dist = gdist(d.x, d.y, x, y); if (dist < r) fn(d, dist); } }
@@ -1783,16 +1903,32 @@ function drawBolts() {
 /* ============================== ambient life ============================== */
 function initAmbient() {
   for (let k = 0; k < 3; k++) wisps.push({x: G.x, y: G.y, k: k * 2.1});
-  for (let k = 0; k < 40; k++) fireflies.push({x: 0, y: -999, ph: rnd() * 6, s: .5 + rnd()});
+  for (let k = 0; k < 90; k++) fireflies.push({x: 0, y: -999, z: 0, ph: rnd() * 6, s: .5 + rnd()});
 }
 function respawnFly(f) {
   for (let t = 0; t < 12; t++) {
-    const x = player.x + (rnd() - .5) * 120, y = player.y + (rnd() - .5) * 60, m = matAt(x, y);
-    if (m === 0 || m === 4 || m === 5) { f.x = x; f.y = y; f.z = 1 + rnd() * 5; return; }
+    const x = player.x + (rnd() - .5) * 120, y = player.y + (rnd() - .5) * 60, m = matAt(x, y), th = MAPD().id;
+    if (th === "frost") { f.x = x; f.y = y; f.z = 6 + rnd() * 16; return; } // snow falls everywhere
+    if (th === "ash" ? m !== 255 : m === 0 || m === 4 || m === 5) { f.x = x; f.y = y; f.z = th === "ash" ? rnd() * 3 : 1 + rnd() * 5; return; }
   }
 }
 
 /* ============================== update ============================== */
+// walking: on Frostmere's ice the knight keeps his momentum, so turns go wide and stops slide
+const slide = {x: 0, y: 0};
+function glide(vx, vy, dt) {
+  if (MAPD().ice && matAt(player.x, player.y) === 8 && !player.roll) {
+    const k = Math.min(1, dt * (vx || vy ? 2.2 : 1));
+    slide.x += (vx - slide.x) * k; slide.y += (vy - slide.y) * k;
+    if (Math.hypot(slide.x, slide.y) > 30 && rnd() < dt * 20) particles.push({x: player.x, y: player.y, z: .2, vx: -slide.x * .2, vy: 0, vz: 1, g: -4, life: .35, max: .35, ch: "~", c0: [220, 235, 255], c1: [90, 110, 140]});
+  } else { slide.x = vx; slide.y = vy; }
+  const sp = Math.hypot(slide.x, slide.y); if (sp < .05) return;
+  for (let s = 0, n = Math.max(1, Math.ceil(sp * dt / .6)); s < n; s++) {
+    const tx = player.x + slide.x * dt / n, ty = player.y + slide.y * dt / n / VS;
+    if (!blockedAt(tx, player.y)) player.x = tx; else slide.x *= -.3;
+    if (!blockedAt(player.x, ty)) player.y = ty; else slide.y *= -.3;
+  }
+}
 let fireAcc = 0;
 function update(dt) {
   time += dt;
@@ -1857,11 +1993,7 @@ function update(dt) {
     const nx = ix / len, ny = iy / len;
     player.dx = nx; player.dy = ny;
     if (Math.abs(nx) > .15) player.face = nx > 0 ? 1 : -1;
-    for (let s = 0, n = Math.max(1, Math.ceil(sp * dt / .6)); s < n; s++) {
-      const tx = player.x + nx * sp * dt / n, ty = player.y + ny * sp * dt / n / VS;
-      if (!blockedAt(tx, player.y)) player.x = tx;
-      if (!blockedAt(player.x, ty)) player.y = ty;
-    }
+    glide(nx * sp, ny * sp, dt);
     player.anim += dt * (4.5 + sp * .09); // run-cycle frames/s: ~1.4 strides/s jogging, ~1.6 running (MMO-like pace)
     player.running = sp > 48;
     const fr = Math.floor(player.anim) % 6;
@@ -1870,7 +2002,7 @@ function update(dt) {
     }
     player.lastFr = fr;
     if (player.running) { player.ghostT -= dt; if (player.ghostT <= 0) { ghosts.push({x: player.x, y: player.y, ...knightPose(), life: .22}); player.ghostT = .05; } }
-  } else player.running = false;
+  } else { player.running = false; glide(0, 0, dt); }
   player.atk = Math.max(0, player.atk - dt); player.atkCd = Math.max(0, player.atkCd - dt); player.recoil = Math.max(0, player.recoil - dt);
   for (let i = ghosts.length - 1; i >= 0; i--) { ghosts[i].life -= dt; if (ghosts[i].life <= 0) ghosts.splice(i, 1); }
   // mana flows back faster while you keep moving: +4/s walking, +7/s running, on top of the base +5/s
@@ -1960,26 +2092,51 @@ function update(dt) {
     w.y = G.y + Math.cos(time * .17 + w.k * 2) * 11;
     w.z = 3 + Math.sin(time * 1.3 + w.k) * 1;
   }
-  for (const f of fireflies) {
+  const th = MAPD().id, nMotes = Math.round(MAPD().motes * (isTouch ? .6 : 1) * QUALITY[quality].fx);
+  for (let i = 0; i < nMotes; i++) {
+    const f = fireflies[i];
     if (gdist(f.x, f.y, player.x, player.y) > 140) respawnFly(f);
-    f.x += Math.sin(time * f.s + f.ph) * dt * 2; f.y += Math.cos(time * f.s * 1.3 + f.ph) * dt;
+    if (th === "frost") { f.z -= dt * (3 + f.s * 2); f.x += Math.sin(time * f.s + f.ph) * dt * 3 + dt * 2; if (f.z <= 0) respawnFly(f); } // drifting snow
+    else if (th === "ash") { f.z += dt * (2 + f.s * 2); f.x += Math.sin(time * f.s * 2 + f.ph) * dt * 3; if (f.z > 14) respawnFly(f); } // rising embers
+    else { f.x += Math.sin(time * f.s + f.ph) * dt * 2; f.y += Math.cos(time * f.s * 1.3 + f.ph) * dt; }
   }
 
   // regions
   const reg = regionAt(player.x, player.y);
   if (reg !== region) {
-    region = reg; $("region").textContent = reg;
-    if (!visited.has(reg)) {
-      visited.add(reg);
+    region = reg; const nm = placeName(reg); $("region").textContent = nm;
+    if (!visited.has(nm)) {
+      visited.add(nm);
       const xp = REGION_XP[reg] || 0;
-      if (xp) { banner(reg, `Discovered · +${xp} XP`); addLog(`Discovered ${reg}. +${xp} XP`, "System", "gold"); gainXP(xp); }
-    } else addLog(`Entered ${reg}.`, "System", "sys");
+      if (xp) { banner(nm, `Discovered · +${xp} XP`); addLog(`Discovered ${nm}. +${xp} XP`, "System", "gold"); gainXP(xp); }
+    } else addLog(`Entered ${nm}.`, "System", "sys");
   }
   if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) $("banner").classList.remove("show"); }
 }
 
 /* ============================== render ============================== */
 let glowSprites = {};
+// upload the world colour + material textures (at start and whenever the map changes)
+function uploadWorld() {
+  if (!texWorld) texWorld = makeTex();
+  gl.bindTexture(gl.TEXTURE_2D, texWorld); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(COL.buffer));
+  const M = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) M[i] = MAT[i] * 16;
+  if (!texMat) texMat = makeTex();
+  gl.bindTexture(gl.TEXTURE_2D, texMat); gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, W, H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, M);
+}
+function loadMap(i) {
+  i = clamp(i | 0, 0, MAPS.length - 1); if (i === mapI && texWorld) return;
+  mapI = i; const M = MAPD(), t0 = performance.now();
+  AMB[0] = M.amb[0]; AMB[1] = M.amb[1]; AMB[2] = M.amb[2];
+  buildWorld(); uploadWorld(); buildMini();
+  residues.length = 0; projectiles.length = 0; particles.length = 0; judgments.length = 0; meteors.length = 0; rifts.length = 0;
+  for (const f of fireflies) f.y = -999;
+  for (const d of dummies) { d.y = d.y0; for (let k = 0; k < 20 && blockedAt(d.x, d.y); k++) d.y += 1; }
+  slide.x = slide.y = 0; region = "";
+  console.info(`[gizmo-knight] map: ${M.name} (${Math.round(performance.now() - t0)} ms)`);
+  addLog(`The realm shifts: ${M.name}.`, "System", "gold");
+  respawn("map change"); // straight into the new arena
+}
 function glowSprite(rgb) {
   const key = rgb.join(",");
   if (glowSprites[key]) return glowSprites[key];
@@ -2144,6 +2301,7 @@ function render() {
   gl.uniform2f(P1.u.uWS, W, H); gl.uniform2f(P1.u.uOrigin, OX, OY); gl.uniform1f(P1.u.uTime, time);
   // lightning lights up the whole landscape for an instant, cold and blue
   gl.uniform3f(P1.u.uAmb, AMB[0] * (1 + skyFlash * 1.6), AMB[1] * (1 + skyFlash * 1.8), AMB[2] * (1 + skyFlash * 2.2)); gl.uniform1f(P1.u.uVS, VS);
+  const MD = MAPD(); gl.uniform3f(P1.u.uWaterC, ...MD.water); gl.uniform1f(P1.u.uLava, MD.lava); gl.uniform3f(P1.u.uMist, ...MD.mist);
   gl.uniform4fv(P1.u.uL, LA); gl.uniform4fv(P1.u.uLC, LC);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -2162,7 +2320,11 @@ function render() {
   drawResidueGround();
   octx.globalCompositeOperation = "lighter";
   for (const l of lights) if (l.pri !== 100) glow(l.x, l.y - (l.c[2] > .9 ? 1 : 0), [255, 150, 60].map((v, j) => Math.round(l.c[j] * 255)), l.r * .55, .1 * l.i);
-  for (const f of fireflies) {
+  const mth = MAPD().id, nM = Math.round(MAPD().motes * (isTouch ? .6 : 1) * QUALITY[quality].fx);
+  for (let i = 0; i < nM; i++) {
+    const f = fireflies[i];
+    if (mth === "frost") { glyph(f.s > 1.1 ? "*" : "·", f.x, f.y - f.z, 225, 235, 255, .75); continue; }
+    if (mth === "ash") { const a = .5 + .5 * Math.sin(time * 5 * f.s + f.ph); glyph("'", f.x, f.y - f.z, 255, 120 + a * 60, 40, (.35 + .4 * a) * Math.min(1, (14 - f.z) / 4)); continue; }
     const a = Math.max(0, Math.sin(time * 2.2 * f.s + f.ph)); if (a < .05) continue;
     glow(f.x, f.y - f.z, [190, 255, 120], 3.5, .35 * a); glyph("·", f.x, f.y - f.z, 220, 255, 150, a);
   }
@@ -2484,17 +2646,17 @@ function drawSmoke() { // smoke clouds drift over everything inside them
    Knight - Shield Charge: his dash bowls over anyone in the way (damage + shove). Blocking a hit refunds mana.
    Berserker - Inferno Rush: his dash leaves a trail of burning ground behind him.
      Bloodlust: under 40% HP his sword hits 40% harder and heals him for a fifth of the damage.
-   Sorcerer - Phase Shift: instead of rolling he teleports. It burns ALL his mana into a rift left where he stood
-     (it detonates a moment later, harder the more mana it ate). Mana keeps regenerating; the shift has a 5 s cooldown.
+   Sorcerer - Phase Shift: instead of rolling he teleports, 22 MP a jump with no cooldown, so he can chain them
+     while his mana lasts. Each jump leaves a small rift where he stood that pops a moment later.
    Shadow - Shadow Step: she is invisible to enemies for as long as she dashes, and sprinting costs her half.
      Backstab: sword hits from behind or from inside smoke (or straight out of a Shadow Step) always crit. */
 const DASH_KEYS = new Set(["KeyC", "Digit6", "ControlLeft"]);
 const SURGE_SPEED = 92, SURGE_MP = 26, KNOCK_T = .22, BLOOD_HP = .4, BLOCK_MP = 8;
-const PHASE_CD = 5, PHASE_DIST = 26, RIFT_DELAY = .55;
+const PHASE_MP = 22, PHASE_CD = .18, PHASE_DIST = 26, RIFT_DELAY = .55;
 const DASHES = [
   {name: "Shield Charge", icon: "⛨", desc: "dash through enemies, knocking them back · hold to keep charging (drains mana)"},
   {name: "Inferno Rush", icon: "♨", desc: "a burst that leaves burning ground behind · hold to keep rushing (drains mana)"},
-  {name: "Phase Shift", icon: "✧", desc: "teleport; leaves all your mana behind as an exploding rift · 5 s cooldown"},
+  {name: "Phase Shift", icon: "✧", desc: "teleport (22 MP each, no cooldown: chain them while your mana lasts); each leaves a small exploding rift"},
   {name: "Shadow Step", icon: "☾", desc: "vanish while you dash · hold to stay unseen (drains mana, at half the cost)"},
 ];
 let dashHeld = false, trailT = 0;
@@ -2542,13 +2704,14 @@ function phaseFx(x0, y0, x1, y1) { // a violet streak between the two points and
 function phaseShift() {
   if (player.dead || player.slam) return;
   if (player.rollCd > 0) return;
+  if (player.mp < PHASE_MP) { noMana(); return; }
   let ix = (keys.r ? 1 : 0) - (keys.l ? 1 : 0) + stick.x, iy = (keys.d ? 1 : 0) - (keys.u ? 1 : 0) + stick.y;
   if (Math.hypot(ix, iy) < .1 && !isTouch && mouseXY.seen) { const [tx, ty] = screenToWorld(mouseXY.x, mouseXY.y); ix = tx - player.x; iy = (ty - player.y) * VS; }
   if (Math.hypot(ix, iy) < .1) { ix = player.dx; iy = player.dy; }
   [ix, iy] = unit(ix, iy);
   const [x1, y1] = openAlong(ix, iy, PHASE_DIST), x0 = player.x, y0 = player.y;
-  const burned = Math.floor(player.mp);
-  player.mp = 0; player.rollCd = PHASE_CD; charge.on = false; player.shield = false;
+  const burned = PHASE_MP;
+  player.mp -= PHASE_MP; player.rollCd = PHASE_CD; charge.on = false; player.shield = false;
   player.x = x1; player.y = y1; player.dx = ix; player.dy = iy; faceDir(ix);
   player.prot = Math.max(player.prot, performance.now() + 300); // slips whatever was about to land
   rifts.push({x: x0, y: y0, t: 0, b: burned, own: true});
@@ -2692,7 +2855,7 @@ const MODES = {ffa: {name: "Free for All", goal: 15}, tdm: {name: "Team Deathmat
 const DEATH_TIME = 3.5, SPAWN_PROT = 2, ROUND_BREAK = 8;
 const NAMES = ["Aldric", "Brann", "Cedric", "Daria", "Elyse", "Fenn", "Garrick", "Hale", "Isolde", "Joren", "Kael", "Lyra", "Maren", "Nyx", "Orin", "Perrin", "Rowan", "Sable", "Tamsin", "Wren"];
 let savedName = ""; try { savedName = localStorage.getItem("gk.name") || ""; } catch (e) {}
-const freshHS = () => ({mode: null, colors: {}, teams: {}, score: {}, teamScore: [0, 0], winner: null, resetIn: 0, round: 0, dummies: []});
+const freshHS = () => ({mode: null, map: 0, colors: {}, teams: {}, score: {}, teamScore: [0, 0], winner: null, resetIn: 0, round: 0, dummies: []});
 const net = {
   mode: "practice", want: "practice", api: null, name: savedName || NAMES[Math.random() * NAMES.length | 0] + "-" + (10 + Math.random() * 90 | 0),
   rank: Math.random(), color: 0, team: 0, host: true, backup: false, curHost: null, curHostT: 0, joinT: 0, placed: false,
@@ -2913,7 +3076,7 @@ function onKill(by, victim) {
   const goal = MODES[net.mode].goal;
   if (net.mode === "tdm") { const t = net.hs.teamScore.findIndex(v => v >= goal); if (t >= 0) net.hs.winner = `${TEAM_NAME[t]} team`; }
   else if (by && sc[by] && sc[by][0] >= goal) net.hs.winner = nameOf(by);
-  if (net.hs.winner) net.resetAt = performance.now() + ROUND_BREAK * 1000;
+  if (net.hs.winner) { net.resetAt = performance.now() + ROUND_BREAK * 1000; net.hs.map = ((net.hs.map | 0) + 1) % MAPS.length; } // the break plays out on the next map
   net.dirty = true;
 }
 function hostDummyHit(i, dmg, kind) {
@@ -2955,13 +3118,14 @@ function onSharedState(prevRound, prevWinner, sameHost = true) {
   if (net.mode === "tdm" && hs.teams[selfId] !== undefined && (t !== net.team || !net.placed)) {
     net.team = t; net.placed = true; addLog(`You fight for the ${TEAM_NAME[t]} team.`, "System", "sys");
   }
-  if (hs.winner && !prevWinner) banner(`${hs.winner} wins!`, `next round in ${ROUND_BREAK}s`);
+  if (hs.winner && !prevWinner) banner(`${hs.winner} wins!`, `next round in ${ROUND_BREAK}s · ${MAPS[hs.map | 0].name}`);
+  if ((hs.map | 0) !== mapI) loadMap(hs.map); // everyone plays on the host's map
   if (hs.round !== prevRound) {
     // only a real new round from the host we already follow respawns everyone; switching to another host
     // (or a host handover) just adopts its round number and leaves you where you are
     const fresh = sameHost && hs.round > prevRound;
     net.round = hs.round;
-    if (fresh) { respawn("new round"); banner(MODES[net.mode].name, net.mode === "practice" ? "no PvP · train together" : "new round · fight!"); }
+    if (fresh) { respawn("new round"); banner(MAPD().name, net.mode === "practice" ? "no PvP · train together" : `${MODES[net.mode].name} · new round · fight!`); }
   }
   net.winner = hs.winner;
 }
@@ -3079,7 +3243,7 @@ function updateScore(dt) {
   const role = (net.host ? " · you are host" : net.backup ? " · standby host" : "") + (viaRelay ? ` · ${viaRelay} via relay` : "");
   $("modeSel").hidden = true; // mode switching is off while the game is Free for All only
   $("modeSel").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === net.mode));
-  $("scoreLine").innerHTML = `${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
+  $("scoreLine").innerHTML = `${MAPD().name} · ${MODES[net.mode].name}${goal ? ` · first to ${goal}` : ""} · ${line}`;
   // the collapsed chip: just the mode and the one number that matters
   let mini;
   if (net.mode === "tdm") mini = `<b style="color:${TEAM_COL[0]}">RED ${hs.teamScore[0]}</b>–<b style="color:${TEAM_COL[1]}">${hs.teamScore[1]} BLUE</b>`;
@@ -3158,13 +3322,12 @@ async function start() {
   await new Promise(r => setTimeout(r, 30));
   KIMG = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = KATLAS; });
   const tw = performance.now();
+  AMB[0] = MAPD().amb[0]; AMB[1] = MAPD().amb[1]; AMB[2] = MAPD().amb[2];
   buildWorld();
   console.info(`[gizmo-knight] world built in ${Math.round(performance.now() - tw)} ms`);
   try { P1 = program(FS_CELLS); P2 = program(FS_DRAW); }
   catch (e) { console.error(e); fail("The renderer failed to start on this device."); return; }
-  texWorld = makeTex(); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(COL.buffer));
-  const M = new Uint8Array(W * H); for (let i = 0; i < W * H; i++) M[i] = MAT[i] * 16;
-  texMat = makeTex(); gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, W, H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, M);
+  uploadWorld();
   buildMini(); resize(); initAmbient(); initDummies();
   addEventListener("resize", resize);
   addLog("You awaken inside the Stone Circle.", "General");
@@ -3221,4 +3384,4 @@ syncMuteBtn();
 $("boardBtn").addEventListener("click", e => { e.stopPropagation(); const b = $("board"); b.hidden = !b.hidden; if (!b.hidden) renderBoard(); });
 $("leaveBtn").addEventListener("click", e => { e.stopPropagation(); location.reload(); });
 start();
-if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net, damage, livePeers, update, startRoll, hold: v => { dashHeld = v; }, dummies, rifts}; // dev-server-only handle for testing
+if (import.meta.env.DEV) window.__gk = {player, cam, WAYSTONES, net, damage, livePeers, update, startRoll, hold: v => { dashHeld = v; }, dummies, rifts, loadMap}; // dev-server-only handle for testing
